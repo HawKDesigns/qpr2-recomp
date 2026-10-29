@@ -102,6 +102,17 @@ KNOWN_RUNTIME_PATCHES = {
         0x001ABB4E,
     ),
 }
+
+# These entry points have recovered host implementations. A fresh lift still
+# emits empty return stubs for direct calls, which corrupts title state.
+# Addresses are valid only for this verified retail executable.
+KNOWN_RECOVERED_STUBS = {
+    "5e9788296601bae4401e31ae1f5e25a8a732cb0bd0588576182d3aa69f859383": (
+        0x00027E00, 0x00037F90, 0x0003D060, 0x00043BE0, 0x00044010,
+        0x00045060, 0x00045510, 0x0006B950, 0x0007F9F0, 0x0007FEF0,
+    ),
+}
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_XBE = PROJECT_ROOT / "game" / "default.xbe"
 DEFAULT_TOOLKIT = PROJECT_ROOT / "third_party" / "xboxrecomp"
@@ -421,6 +432,161 @@ def apply_known_runtime_patches(generated_dir: Path, xbe_sha256: str) -> int:
     return changed
 
 
+
+def apply_known_generated_bridges(generated_dir: Path, xbe_sha256: str) -> int:
+    """Restore verified host bridges after each clean lift of the retail XBE."""
+    addresses = KNOWN_RECOVERED_STUBS.get(xbe_sha256, ())
+    if not addresses:
+        return 0
+
+    changed = 0
+    stubs_path = generated_dir / "recomp_stubs_unresolved.c"
+    if not stubs_path.is_file():
+        raise PipelineError(f"recovered call stubs missing: {stubs_path}")
+    stubs = stubs_path.read_text(encoding="utf-8")
+    for address in addresses:
+        name = f"{address:08X}"
+        empty = (f"void sub_{name}(void) {{ g_esp += 4; "
+                 f"/* 0x{name}: not detected */ }}")
+        wrapper = (f"extern void qpr2_recovered_{name}(void);\n"
+                   f"void sub_{name}(void) {{ qpr2_recovered_{name}(); }}")
+        if stubs.count(wrapper) == 1:
+            continue
+        if stubs.count(empty) != 1:
+            raise PipelineError(
+                f"recovered call 0x{name} did not match its empty stub; "
+                "inspect generated code and the linked host implementation"
+            )
+        stubs = stubs.replace(empty, wrapper)
+        changed += 1
+    stubs_path.write_text(stubs, encoding="utf-8")
+
+    header_path = generated_dir / "recomp_types.h"
+    if not header_path.is_file():
+        raise PipelineError(f"generated bridge declarations missing: {header_path}")
+    header = header_path.read_text(encoding="utf-8")
+    anchor = "void recomp_memory_fence(uint32_t va);"
+    declarations = (
+        "\nvoid recomp_nv2a_cache_flush(uint32_t register_va);"
+        "\nvoid recomp_nv2a_submit(uint32_t register_va, uint32_t put);"
+        "\nint recomp_nv2a_fence_wait(uint32_t device, uint32_t requested);"
+    )
+    if declarations not in header:
+        if header.count(anchor) != 1 or any(
+            declaration in header for declaration in declarations.splitlines()
+            if declaration
+        ):
+            raise PipelineError("generated NV2A bridge declarations have drifted")
+        header_path.write_text(
+            header.replace(anchor, anchor + declarations), encoding="utf-8"
+        )
+        changed += 1
+
+    # Locate the functions by guest address so --split can change TU numbering.
+    candidates = [
+        path for path in generated_dir.glob("recomp_*.c")
+        if "void sub_00196CF0(void)" in path.read_text(encoding="utf-8")
+    ]
+    if len(candidates) != 1:
+        raise PipelineError(
+            f"NV2A bridge function matched {len(candidates)} generated files"
+        )
+    bridge_path = candidates[0]
+    source = bridge_path.read_text(encoding="utf-8")
+    patches = (
+        (
+            "void sub_00196CF0(void)\n{\n",
+            "void sub_00196CF0(void)\n{\n"
+            "    const uint32_t requested_fence = MEM32(g_esp + 4);\n",
+            1,
+        ),
+        (
+            "    RECOMP_PC(0x00196DF4u);\n",
+            "    RECOMP_PC(0x00196DF4u);\n"
+            "    if (recomp_nv2a_fence_wait(esi, requested_fence)) "
+            "goto loc_00196E0F;\n",
+            1,
+        ),
+        (
+            "    MEM32(eax + 0x100410) = ecx;\n",
+            "    MEM32(eax + 0x100410) = ecx;\n"
+            "    recomp_nv2a_cache_flush(eax + 0x100410);\n",
+            3,
+        ),
+        (
+            "    MEM32(ecx + 0x40) = edx;\n",
+            "    MEM32(ecx + 0x40) = edx;\n"
+            "    recomp_nv2a_submit(ecx + 0x40, edx);\n",
+            2,
+        ),
+        (
+            "    MEM32(edx + 0x40) = eax;\n",
+            "    MEM32(edx + 0x40) = eax;\n"
+            "    recomp_nv2a_submit(edx + 0x40, eax);\n",
+            1,
+        ),
+    )
+    for needle, replacement, expected in patches:
+        if source.count(replacement) == expected:
+            continue
+        if source.count(replacement) or source.count(needle) != expected:
+            raise PipelineError(
+                f"NV2A bridge in {bridge_path.name} changed shape: "
+                f"expected {expected} instances of {needle.strip()}"
+            )
+        source = source.replace(needle, replacement)
+        changed += expected
+    bridge_path.write_text(source, encoding="utf-8")
+
+
+    # Keep the faulting UI path observable in a clean build. The earlier
+    # generated files carried these probes by hand, leaving UI-HISTORY empty
+    # after 'all' replaced them.
+    ui_candidates = [
+        path for path in generated_dir.glob("recomp_*.c")
+        if "void sub_0010FEE0(void)" in path.read_text(encoding="utf-8")
+    ]
+    if len(ui_candidates) != 1:
+        raise PipelineError(
+            f"UI trace function matched {len(ui_candidates)} generated files"
+        )
+    ui_path = ui_candidates[0]
+    ui = ui_path.read_text(encoding="utf-8")
+    include = '#include "../../qpr2_ui_trace.h"\n'
+    if include not in ui:
+        anchor = '#include "recomp_funcs.h"\n'
+        if ui.count(anchor) != 1:
+            raise PipelineError("UI trace include location has drifted")
+        ui = ui.replace(anchor, anchor + include)
+        changed += 1
+    marker = "    RECOMP_PC(0x0010FEE0u);\n"
+    observed = (
+        "    qpr2_ui_trace(0, 0x0010FEE0u, 0, ecx, MEM32(esp), "
+        "MEM32(esp + 4), esp, ebx, esi, edi);\n"
+    )
+    if observed not in ui:
+        if ui.count(marker) != 1:
+            raise PipelineError("UI trace entry has drifted")
+        ui = ui.replace(marker, observed + marker)
+        changed += 1
+    for site in (0x0010F45C, 0x0010FF29, 0x0010FF55, 0x0010FF61):
+        original = (
+            f"RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x{site:08X}u)"
+        )
+        traced = f"QPR2_UI_ICALL(_icall_target, _icall_esp, 0x{site:08X}u)"
+        if traced in ui:
+            continue
+        if ui.count(original) != 1:
+            raise PipelineError(f"UI trace call at 0x{site:08X} has drifted")
+        ui = ui.replace(original, traced)
+        changed += 1
+    ui_path.write_text(ui, encoding="utf-8")
+
+    if changed:
+        print(f"Applied {changed} verified generated host bridge(s)")
+    return changed
+
+
 def verify_inputs(toolkit: Path, xbe: Path, require_xbe: bool = True) -> None:
     if not (toolkit / "tools" / "xbe_parser").is_dir():
         raise PipelineError(
@@ -549,6 +715,7 @@ def lift(toolkit: Path, xbe: Path, allow_unknown: bool, split: int) -> None:
         "-v",
     )
     apply_known_runtime_patches(GENERATED_C, digest)
+    apply_known_generated_bridges(GENERATED_C, digest)
     generated = len(list(GENERATED_C.glob("*.c")))
     print(f"Lift complete: {generated} C files in {GENERATED_C.relative_to(PROJECT_ROOT)}")
 

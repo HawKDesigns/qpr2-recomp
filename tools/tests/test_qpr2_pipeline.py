@@ -219,6 +219,80 @@ class PipelineTests(unittest.TestCase):
                 other_path.read_text(encoding="utf-8"),
             )
 
+    def test_recovered_calls_and_nv2a_bridges_survive_clean_generation(self):
+        digest = next(iter(pipeline.KNOWN_RECOVERED_STUBS))
+        with tempfile.TemporaryDirectory() as directory:
+            generated = Path(directory)
+            addresses = pipeline.KNOWN_RECOVERED_STUBS[digest]
+            stubs = generated / "recomp_stubs_unresolved.c"
+            stubs.write_text("".join(
+                f"void sub_{address:08X}(void) {{ g_esp += 4; "
+                f"/* 0x{address:08X}: not detected */ }}\n"
+                for address in addresses
+            ), encoding="utf-8")
+            header = generated / "recomp_types.h"
+            header.write_text(
+                "void recomp_memory_fence(uint32_t va);\n", encoding="utf-8"
+            )
+            bridge = generated / "recomp_0033.c"
+            bridge.write_text(
+                "void sub_00196CF0(void)\n{\n"
+                "    RECOMP_PC(0x00196DF4u);\n"
+                + "    MEM32(eax + 0x100410) = ecx;\n" * 3
+                + "    MEM32(ecx + 0x40) = edx;\n" * 2
+                + "    MEM32(edx + 0x40) = eax;\n"
+                + "}\n",
+                encoding="utf-8",
+            )
+
+            ui = generated / "recomp_0020.c"
+            ui.write_text(
+                '#include "recomp_funcs.h"\n'
+                "void sub_0010FEE0(void) {\n"
+                "    RECOMP_PC(0x0010FEE0u);\n"
+                "}\n"
+                + "".join(
+                    f"RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, "
+                    f"0x{site:08X}u);\n"
+                    for site in (0x0010F45C, 0x0010FF29,
+                                 0x0010FF55, 0x0010FF61)
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                pipeline.apply_known_generated_bridges(generated, "different"), 0)
+            self.assertEqual(
+                pipeline.apply_known_generated_bridges(generated, digest), 25)
+            patched = bridge.read_text(encoding="utf-8")
+            self.assertIn("requested_fence = MEM32(g_esp + 4)", patched)
+            self.assertEqual(patched.count("recomp_nv2a_cache_flush("), 3)
+            self.assertEqual(patched.count("recomp_nv2a_submit("), 3)
+            self.assertIn("recomp_nv2a_fence_wait(", patched)
+            self.assertEqual(ui.read_text().count("QPR2_UI_ICALL("), 4)
+            self.assertIn("qpr2_ui_trace(0, 0x0010FEE0u", ui.read_text())
+            self.assertIn("void recomp_nv2a_submit(", header.read_text())
+            for address in addresses:
+                self.assertIn(
+                    f"void sub_{address:08X}(void) "
+                    f"{{ qpr2_recovered_{address:08X}(); }}",
+                    stubs.read_text(encoding="utf-8"))
+            self.assertEqual(
+                pipeline.apply_known_generated_bridges(generated, digest), 0)
+            self.assertEqual(bridge.read_text(encoding="utf-8"), patched)
+
+    def test_recovered_stub_drift_fails_loudly(self):
+        digest = next(iter(pipeline.KNOWN_RECOVERED_STUBS))
+        with tempfile.TemporaryDirectory() as directory:
+            generated = Path(directory)
+            (generated / "recomp_stubs_unresolved.c").write_text(
+                "void sub_00027E00(void) { g_esp += 8; }\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(pipeline.PipelineError, "empty stub"):
+                pipeline.apply_known_generated_bridges(generated, digest)
+
+
 
 if __name__ == "__main__":
     unittest.main()
