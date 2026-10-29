@@ -1,7 +1,10 @@
 # Reproduce QPR2 shader specializations locally
 
-The public fork keeps runtime code and generic fallbacks. Original Xbox shader
-words and captured GPU state stay in each user's local checkout.
+The public fork keeps runtime code and generic fallbacks. Public shader-state
+metadata is limited to hashes, numeric identifiers, counts, and generalized
+technical descriptors; see [SHADER_STATES.md](docs/SHADER_STATES.md). Original
+Xbox shader instruction words and captured GPU state stay in each user's
+local checkout.
 
 ## Vertex programs from your extracted archive
 
@@ -20,8 +23,9 @@ It matches complete shader instruction words and uses live constants.
 
 The second generator **does exist**: `tools/generate_qpr2_literal_materials.py`.
 It requires `tools/fixtures/qpr2-literal-programs.json`, captured from the
-running game. Neither that JSON nor its generated output belongs in the
-public fork.
+running game. That JSON contains complete instruction-word arrays, unlike
+the public hashes and numeric identifiers. Keep the JSON and its generated
+program bodies local.
 
 1. Run the QPR2 build with your own game files. `rebuild-and-run.ps1` sets
    `RECOMP_GPU_CAPTURE` to a local path in the run's `logs/` directory.
@@ -81,4 +85,4 @@ containing game data. Retain XboxRecomp's original licenses and notices.
 Older public fork commits contained generated literal bodies and an embedded
 shader header. Removing files from the latest tree does not erase those
 earlier Git objects. Treat that history as requiring a separate publication
-review before advertising the fork as free of game-derived data.
+review before advertising its history as free of embedded program words.
