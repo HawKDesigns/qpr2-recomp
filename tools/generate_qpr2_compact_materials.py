@@ -1,0 +1,89 @@
+"""Generate scalar SSA for the three captured programs, retaining operation order.
+Only unreachable values are omitted. No arithmetic identities/reassociation or
+sampling/state assumptions are introduced. V97 literal execution is independent.
+"""
+from pathlib import Path
+import json,re
+root=Path(__file__).resolve().parents[1];k=root/'third_party/xboxrecomp/src/kernel'
+programs=json.loads((root/'tools/fixtures/qpr2-literal-programs.json').read_text())
+class Graph:
+ def __init__(self):self.nodes={};self.next=0
+ def node(self,expr):
+  name='s'+str(self.next);self.next+=1;self.nodes[name]=expr;return name
+ def live(self,outputs):
+  live=set()
+  def visit(expr):
+   for n in re.findall(r'\bs\d+\b',expr):
+    if n not in live:live.add(n);visit(self.nodes[n])
+  for expr in outputs:visit(expr)
+  return live
+ def emit(self,live,begin=0,end=None):
+  return ''.join('    GPU_PRECISE float '+n+' = '+expr+';\n' for n,expr in self.nodes.items() if n in live and int(n[1:])>=begin and (end is None or int(n[1:])<end))
+def generate(p):
+ g=Graph();reg={r:['0.0f']*4 for r in range(16)}
+ for r,name in [(3,'fog'),(4,'v0'),(5,'v1')]:reg[r]=[f'{name}[{i}]' for i in range(4)]
+ for st in range(4):reg[8+st]=[f't[{st}][{i}]' for i in range(4)]
+ reg[12][3]='t[0][3]' if p['stages']&31 else '1.0f'
+ def unpack(word):
+  return [g.node(f'(float)(({word} >> {shift}) & 255u) / 255.0f') for shift in [16,8,0,24]]
+ def read(word,component,alpha=False):
+  byte=word&255;channel=3 if byte&16 else (2 if alpha else component)
+  return g.node(f'gpu_map_in({reg[byte&15][channel]},0x{byte:02X}u)')
+ def mapped(value,mapping):return g.node(f'gpu_clampf(gpu_map_out({value},0x{mapping:02X}u),-1.0f,1.0f)')
+ n=p['control']&255;flags=p['control']>>8
+ for st in range(n):
+  reg[1]=unpack(f'rc.factor0[{st if flags&16 else 0}]');reg[2]=unpack(f'rc.factor1[{st if flags&256 else 0}]')
+  mux=f'({reg[12][3]} >= 0.5f)' if flags&1 else f'((int)({reg[12][3]} * 255.0f) & 1)'
+  icw=p['rgb_in'][st];ocw=p['rgb_out'][st];aicw=p['alpha_in'][st];aocw=p['alpha_out'][st];fl=ocw>>12;afl=aocw>>12
+  rgb=[[read(icw>>shift,c) for c in range(3)] for shift in [24,16,8,0]]
+  alpha=[read(aicw>>shift,0,True) for shift in [24,16,8,0]]
+  outputs=[[],[],[]]
+  for c in range(3):
+   a,b,cc,d=[x[c] for x in rgb]
+   ab=g.node(' + '.join(f'{rgb[0][i]} * {rgb[1][i]}' for i in range(3)) if fl&2 else f'{a} * {b}')
+   cd=g.node(' + '.join(f'{rgb[2][i]} * {rgb[3][i]}' for i in range(3)) if fl&1 else f'{cc} * {d}')
+   total=g.node(f'{mux} ? {cd} : {ab}' if fl&4 else f'{ab} + {cd}')
+   for j,v in enumerate([ab,cd,total]):outputs[j].append(mapped(v,fl&56))
+  a,b,c,d=alpha;ab=g.node(f'{a} * {b}');cd=g.node(f'{c} * {d}');total=g.node(f'{mux} ? {cd} : {ab}' if afl&4 else f'{ab} + {cd}')
+  alphas=[mapped(v,afl&56) for v in [ab,cd,total]]
+  # Both portions read the old values; writes then follow original alias order.
+  for j,dest in enumerate([(ocw>>4)&15,ocw&15,(ocw>>8)&15]):
+   if dest:
+    reg[dest][:3]=outputs[j]
+    if (j==0 and fl&128) or (j==1 and fl&64):reg[dest][3]=outputs[j][2]
+  for j,dest in enumerate([(aocw>>4)&15,aocw&15,(aocw>>8)&15]):
+   if dest:reg[dest][3]=alphas[j]
+  reg[0]=['0.0f']*4
+ common_end=g.next;prior={r:list(v) for r,v in reg.items()};variants=[]
+ for final in p['finals']:
+  reg={r:list(v) for r,v in prior.items()};start=g.next;f1=p['final1'];fflags=f1&255
+  reg[1]=unpack('rc.final_c0');reg[2]=unpack('rc.final_c1')
+  for c in range(3):
+   a=g.node('1.0f - '+reg[5][c]) if fflags&64 else reg[5][c]
+   b=g.node('1.0f - '+reg[12][c]) if fflags&32 else reg[12][c]
+   value=g.node(f'{a} + {b}');reg[14][c]=g.node(f'gpu_clampf({value},0.0f,1.0f)') if fflags&128 else value
+  reg[14][3]='0.0f'
+  E=[read(f1>>24,c) for c in range(3)];F=[read(f1>>16,c) for c in range(3)]
+  reg[15]=[g.node(f'{E[c]} * {F[c]}') for c in range(3)]+['0.0f']
+  rgb=[[read(final>>shift,c) for c in range(3)] for shift in [24,16,8,0]]
+  result=[]
+  for c in range(3):
+   a,b,cc,d=[x[c] for x in rgb];v=g.node(f'{d} + {cc} * (1.0f - {a}) + {b} * {a}');result.append(g.node(f'gpu_clampf({v},0.0f,1.0f)'))
+  a=read(f1>>8,0,True);result.append(g.node(f'gpu_clampf({a},0.0f,1.0f)'))
+  variants.append((final,start,g.next,result,g.live(result)))
+ live=set.union(*(v[4] for v in variants))
+ out='GPU_FN void gpu_rc_compact(Nv2aCombiner rc,float v0[4],float v1[4],float fog[4],float t[4][4],GPU_OUT4(result))\n{\n'+g.emit(live,0,common_end)
+ for index,(final,start,end,result,active) in enumerate(variants):
+  if len(variants)>1:out+=('    if' if index==0 else '    else if')+f'(rc.final0==0x{final:08X}u){{\n'
+  out+=g.emit(active,start,end)
+  out+=''.join(f'    result[{c}]={value};\n' for c,value in enumerate(result))
+  if len(variants)>1:out+='    return;\n    }\n'
+ if len(variants)>1:out+='    for(int c=0;c<4;c++)result[c]=0;\n'
+ out+='}\n'
+ return out,{'class':p['class'],'original_scalar_nodes':g.next,'reachable_scalar_nodes':len(live),'omitted_scalar_nodes':g.next-len(live)}
+out='/* Generated by tools/generate_qpr2_compact_materials.py.\n * Scalar SSA: preserve all live operations, boundaries and alias order. */\n';stats=[]
+for p in programs:
+ out+=('#if' if p['class']==1 else '#elif')+f' NV_GPU_LITERAL_CLASS == {p["class"]}\n';body,stat=generate(p);out+=body;stats.append(stat)
+out+='#endif\n';target=k/'nv2a_gpu_compact.inc'
+if not target.exists() or target.read_text()!=out:target.write_text(out)
+print(json.dumps(stats))

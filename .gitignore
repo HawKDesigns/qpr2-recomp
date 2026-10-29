@@ -1,0 +1,43 @@
+# User-supplied retail files. Keep only the optional documentation placeholder.
+/game/*
+!/game/README.md
+
+# Retail-derived analysis and generated recompilation output.
+/analysis/
+/src/generated/
+/src/recomp/gen/
+# Older generated translations retained for local rollback; do not publish.
+/rollback/
+
+# Saves, diagnostics, extracted captures, and compiled shader binaries.
+/hdd/
+/logs/
+/shader-cache/
+/xbox_kernel.log
+/xbox_ram.bin
+*.log
+*.dxbc
+*.dmp
+*.xbe
+*.xiso
+*.iso
+*.xmv
+*.xip
+stderr.txt
+
+# CMake/MSBuild and local IDE state (including versioned diagnostic builds).
+/build/
+/build-*/
+/out/
+/.vs/
+/.vscode/
+CMakeUserPresets.json
+__pycache__/
+*.py[cod]
+
+# Locally packaged overlays and test results.
+*.zip
+/tools/validation-v*.txt
+/tools/benchmark-v*.json
+/tools/*-evidence.json
+/tools/v*-changed-files.txt
