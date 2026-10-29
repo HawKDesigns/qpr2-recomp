@@ -1,0 +1,24 @@
+name: XboxRecomp v0.16 trial
+
+on:
+  push:
+    branches: [qpr2-v016-experimental]
+  workflow_dispatch:
+
+jobs:
+  runtime-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Configure XboxRecomp runtime
+        run: cmake -S third_party/xboxrecomp -B build-runtime -A x64
+      - name: Build XboxRecomp runtime
+        run: cmake --build build-runtime --config Release --parallel 4
+      - name: Configure NV2A vertex test
+        run: cmake -S third_party/xboxrecomp/tests/nv2a_vsh -B build-vsh -A x64
+      - name: Build and run NV2A vertex test
+        run: |
+          cmake --build build-vsh --config Release
+          ctest --test-dir build-vsh -C Release --output-on-failure

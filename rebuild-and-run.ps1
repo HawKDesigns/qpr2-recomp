@@ -7,25 +7,25 @@ if (-not (Test-Path ".\CMakeLists.txt")) {
 New-Item -ItemType Directory -Force ".\logs" | Out-Null
 # Retain each attempt, including a failed boot, across consecutive launches.
 $runId = (Get-Date -Format "yyyyMMdd-HHmmss-fff") + "-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
-$runLogDir = Join-Path $PWD ("logs\v126-run-" + $runId)
+$runLogDir = Join-Path $PWD ("logs\v016-run-" + $runId)
 New-Item -ItemType Directory -Force $runLogDir | Out-Null
 
 # Isolate every object from the partial v30/v31 builds. Do not rely on ZIP
 # timestamps to invalidate previously compiled MSBuild objects.
-$diagnosticBuildDir = Join-Path $PWD "build-diagnostic-v126"
+$diagnosticBuildDir = Join-Path $PWD "build-diagnostic-v016"
 
 # V53 builds the supplied generation and bounded recovered callbacks.
 # Do not run the V22 rollback or regenerate the full lift here.
-Write-Host "Configuring QPR2 diagnostic overlay v126..."
-& cmake -S . -B $diagnosticBuildDir 2>&1 | Tee-Object -FilePath "$runLogDir\diagnostic-v126-configure.log"
+Write-Host "Configuring QPR2 diagnostic overlay v016..."
+& cmake -S . -B $diagnosticBuildDir 2>&1 | Tee-Object -FilePath "$runLogDir\diagnostic-v016-configure.log"
 if ($LASTEXITCODE -ne 0) { throw "CMake configure failed: $LASTEXITCODE" }
 
-Write-Host "Building QPR2 diagnostic overlay v126..."
+Write-Host "Building QPR2 diagnostic overlay v016..."
 & cmake --build $diagnosticBuildDir --config Release --target qpr2_recomp --parallel 2>&1 |
-    Tee-Object -FilePath "$runLogDir\diagnostic-v126-build.log"
+    Tee-Object -FilePath "$runLogDir\diagnostic-v016-build.log"
 $buildExit = $LASTEXITCODE
-$buildExit | Set-Content "$runLogDir\diagnostic-v126-build.exitcode.txt"
-if ($buildExit -ne 0) { throw "Build failed: $buildExit. Send diagnostic-v126-build.log." }
+$buildExit | Set-Content "$runLogDir\diagnostic-v016-build.exitcode.txt"
+if ($buildExit -ne 0) { throw "Build failed: $buildExit. Send diagnostic-v016-build.log." }
 
 # V108 removes the V107 live-depth experiment; clear an inherited override.
 $env:RECOMP_GPU_LIVE_DEPTH = "0"
@@ -71,7 +71,7 @@ if ($env:RECOMP_AUDIO_DIAGNOSTICS -eq "1") {
 # Audio sample exports decode/copy and write files synchronously. Keep normal
 # playback and timing diagnostics; captures require an explicit opt-in.
 if ($env:RECOMP_AUDIO_DIAGNOSTICS -eq "1") {
-    $env:RECOMP_VOICE_DUMP = "$runLogDir\one-hundred-twenty-sixth-voice-"
+    $env:RECOMP_VOICE_DUMP = "$runLogDir\v016-experiment-voice-"
 } else {
     Remove-Item Env:RECOMP_VOICE_DUMP -ErrorAction SilentlyContinue
 }
@@ -240,7 +240,7 @@ if (-not (Test-Path Env:RECOMP_GPU_UPLOAD_STREAM)) { $env:RECOMP_GPU_UPLOAD_STRE
 if (-not (Test-Path Env:RECOMP_GPU_UPLOAD_CACHE)) { $env:RECOMP_GPU_UPLOAD_CACHE = "1" }
 # Reuse repeated indices within one draw; context-writing programs bypass it.
 if (-not (Test-Path Env:RECOMP_VERTEX_CACHE)) { $env:RECOMP_VERTEX_CACHE = "1" }
-$env:RECOMP_GPU_CAPTURE = "$runLogDir\one-hundred-twenty-sixth-gpu-capture.bin"
+$env:RECOMP_GPU_CAPTURE = "$runLogDir\v016-experiment-gpu-capture.bin"
 # Buffer stderr before startup; set RECOMP_LOG_UNBUFFERED=1 only for crash tracing.
 # Keep aggregate timings; frequent per-call output must be explicitly requested.
 $env:RECOMP_GAME_TIMING = "1"
@@ -266,7 +266,7 @@ Remove-Item Env:RECOMP_FMV_DUMP -ErrorAction SilentlyContinue
 # Automatic screenshots write synchronously on the FIFO thread. Keep ordinary
 # timing logs and F8 captures, but opt in to periodic images when needed.
 if ($env:RECOMP_FRAME_DIAGNOSTICS -eq "1") {
-    $env:RECOMP_FB_DUMP = "$runLogDir\one-hundred-twenty-sixth-frame-"
+    $env:RECOMP_FB_DUMP = "$runLogDir\v016-experiment-frame-"
 } else {
     Remove-Item Env:RECOMP_FB_DUMP -ErrorAction SilentlyContinue
     Remove-Item Env:RECOMP_FB_DUMP_FLIPS -ErrorAction SilentlyContinue
@@ -275,7 +275,7 @@ if ($env:RECOMP_FRAME_DIAGNOSTICS -eq "1") {
 # F8 still captures rendering inputs/output. Opt in only when texture images
 # are specifically needed; clear a value inherited from an older launcher.
 if ($env:RECOMP_TEXTURE_DIAGNOSTICS -eq "1") {
-    $env:RECOMP_TEX_DUMP = "$runLogDir\one-hundred-twenty-sixth-texture-"
+    $env:RECOMP_TEX_DUMP = "$runLogDir\v016-experiment-texture-"
 } else {
     Remove-Item Env:RECOMP_TEX_DUMP -ErrorAction SilentlyContinue
 }
@@ -291,12 +291,12 @@ if ($env:RECOMP_RENDER_DIAGNOSTICS -eq "1") {
     Remove-Item Env:RECOMP_RENDER_STATE -ErrorAction SilentlyContinue
 }
 
-$tempLogDir = Join-Path $env:TEMP ("qpr2-recomp-v126-" + [guid]::NewGuid())
+$tempLogDir = Join-Path $env:TEMP ("qpr2-recomp-v016-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Force $tempLogDir | Out-Null
-$tempStdout = Join-Path $tempLogDir "one-hundred-twenty-sixth-run.stdout.log"
-$tempStderr = Join-Path $tempLogDir "one-hundred-twenty-sixth-run.stderr.log"
+$tempStdout = Join-Path $tempLogDir "v016-experiment-run.stdout.log"
+$tempStderr = Join-Path $tempLogDir "v016-experiment-run.stderr.log"
 
-Write-Host "Starting QPR2 from the isolated v126 build with dispatcher and renderer verification..."
+Write-Host "Starting QPR2 from the isolated v016 build with dispatcher and renderer verification..."
 Write-Host "The diagnostic will run for up to 360 seconds."
 Write-Host "Use your controller; keyboard fallback: Enter = Start, Z = A, arrows = D-pad (focus the game window)."
 Write-Host "Live logs are on the local temp volume: $tempLogDir"
@@ -308,18 +308,18 @@ $process = Start-Process `
     -RedirectStandardOutput $tempStdout `
     -RedirectStandardError $tempStderr
 
-Copy-Item -Force $tempStdout "$runLogDir\one-hundred-twenty-sixth-run.stdout.log"
-Copy-Item -Force $tempStderr "$runLogDir\one-hundred-twenty-sixth-run.stderr.log"
-$process.ExitCode | Set-Content "$runLogDir\one-hundred-twenty-sixth-run.exitcode.txt"
+Copy-Item -Force $tempStdout "$runLogDir\v016-experiment-run.stdout.log"
+Copy-Item -Force $tempStderr "$runLogDir\v016-experiment-run.stderr.log"
+$process.ExitCode | Set-Content "$runLogDir\v016-experiment-run.exitcode.txt"
 Write-Host "Run finished with exit code $($process.ExitCode)."
 Write-Host "Kept this run in $runLogDir (earlier attempts remain in their own folders)."
 
 
 if (Test-Path ".\xbox_kernel.log") {
-    Copy-Item -Force ".\xbox_kernel.log" "$runLogDir\one-hundred-twenty-sixth-kernel.log"
+    Copy-Item -Force ".\xbox_kernel.log" "$runLogDir\v016-experiment-kernel.log"
 }
-$results = @(Get-ChildItem "$runLogDir\diagnostic-v126-*", "$runLogDir\one-hundred-twenty-sixth-*" -File)
+$results = @(Get-ChildItem "$runLogDir\diagnostic-v016-*", "$runLogDir\v016-experiment-*" -File)
 if ($results.Count -gt 0) {
-    Compress-Archive -LiteralPath $results.FullName -DestinationPath ".\logs\qpr2-v126-results.zip" -Force
-    Write-Host "Results archived: $PWD\logs\qpr2-v126-results.zip"
+    Compress-Archive -LiteralPath $results.FullName -DestinationPath ".\logs\qpr2-v016-results.zip" -Force
+    Write-Host "Results archived: $PWD\logs\qpr2-v016-results.zip"
 }

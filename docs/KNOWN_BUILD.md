@@ -20,7 +20,8 @@ retail executable. The XBE and generated translations are not distributed.
 | Sections | 13 |
 | Kernel imports | 113 |
 | Initial XboxRecomp analysis base | `193e2995ffaec871bb3be43a43bd66aa5fccfeb1` (v0.13.1) |
-| Current QPR2 runtime fork | `e74078bb6a76441a611e3cdcfbe98df9325745db` (`qpr2-v126`) |
+| Working QPR2 v126 runtime | `e74078bb6a76441a611e3cdcfbe98df9325745db` (`qpr2-v126`) |
+| Experimental v0.16.0 merge | `ccef1cb39680dfe02d9014dbb81232ef4a48fd1f` (`qpr2-v016-experimental`) |
 
 ## Analysis result
 

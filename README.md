@@ -6,6 +6,23 @@ An experimental native Windows recompilation of the original Xbox version of
 from your own copy. The project does not distribute retail executable or asset
 files.
 
+## XboxRecomp v0.16.0 trial
+
+This branch pins an experimental merge of XboxRecomp v0.16.0 with the QPR2
+runtime. The working v126 version remains on `main`. The merged runtime passed
+recompiler and standalone NV2A tests, but its Windows build and race behavior
+still need comparison against v126. Test from a separate directory:
+
+```powershell
+git clone --branch qpr2-v016-experimental --recurse-submodules https://github.com/HawKDesigns/qpr2-recomp.git qpr2-v016-test
+```
+
+Supply your own `game/` contents, generate the local recompilation output as
+described below, and run `rebuild-and-run.ps1`. The launcher writes to
+`build-diagnostic-v016/` and `logs/qpr2-v016-results.zip`. See the fork's
+`docs/QPR2_V016_INTEGRATION.md` for the merge limits. Keep the v126 checkout
+available for a same-track comparison.
+
 ## Current status (diagnostic overlay v126)
 
 The matching North American retail XBE has been analyzed and lifted: 8,792
