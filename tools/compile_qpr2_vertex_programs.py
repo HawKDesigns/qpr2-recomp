@@ -1,7 +1,7 @@
 """Generate scalar SSA C specializations from QPR2's extracted shader archive.
 
 Usage: python tools/compile_qpr2_vertex_programs.py ATV.zip [output.h]
-The generated header is checked in; building/running never needs game assets.
+The generated header stays local; generic builds can use the fallback.
 The bytecode matcher compares every instruction, including unused bits. There
 are no baked-in matrices, lighting values, texture coordinates, or vertices.
 """
