@@ -1,67 +1,84 @@
-# Publishing and local game-derived data
+# Reproduce QPR2 shader specializations locally
 
-This project publishes source for an independent Xbox recompilation. It does
-not grant permission to redistribute the retail game, its extracted assets,
-translated retail code, or data captured from its shaders. Review the complete
-working tree and generated outputs before publishing a new branch or release.
+The public fork keeps runtime code and generic fallbacks. Original Xbox shader
+words and captured GPU state stay in each user's local checkout.
 
-## Shader headers in the XboxRecomp fork
+## Vertex programs from your extracted archive
 
-The QPR2 runtime can use two optional game-specific headers:
-
-| Local path under `third_party/xboxrecomp/src/kernel/` | Source | Public fork |
-| --- | --- | --- |
-| `nv2a_vsh_compiled.h` | Generated from the user's extracted `ATV.zip`; includes exact shader instruction words and native specializations | Omitted and ignored |
-| `nv2a_gpu_literal_programs.h` | Captured game-specific combiner/literal programs | Omitted and ignored |
-
-These files were present in the local v126 development runtime, but were
-**not committed** to `HawKDesigns/xboxrecomp` on `qpr2-v126` or
-`qpr2-v016-experimental`. The public runtime has generic fallback paths.
-A build or standalone test that passes without these files does not establish
-the same rendering behavior or frame rate as a local v126 race.
-
-For a comparison using your own game data, clone the experimental QPR2 branch
-in a separate directory and copy both headers from your existing local v126
-checkout into the same relative `third_party/xboxrecomp/src/kernel/` directory.
-On Windows PowerShell, from the **experimental QPR2 repo root**:
+Extract the game's BAD/BAH resources from your own copy until you have the
+original `ATV.zip` with `VertexShader/Assembled/VS*` entries. From the QPR2
+repo root, run:
 
 ```powershell
-$sourceKernel = "S:\ATV qpr 2 recomp\third_party\xboxrecomp\src\kernel"
-$targetKernel = ".\third_party\xboxrecomp\src\kernel"
-Copy-Item (Join-Path $sourceKernel "nv2a_vsh_compiled.h") $targetKernel
-Copy-Item (Join-Path $sourceKernel "nv2a_gpu_literal_programs.h") $targetKernel
+py -3 tools/compile_qpr2_vertex_programs.py "path\to\ATV.zip"
 ```
 
-Adjust `$sourceKernel` to your actual working v126 checkout. If you need to
-regenerate the first header from **your own extracted archive**, run this from
-the QPR2 root:
+This writes `third_party/xboxrecomp/src/kernel/nv2a_vsh_compiled.h`.
+It matches complete shader instruction words and uses live constants.
 
-```powershell
-py -3 tools/compile_qpr2_vertex_programs.py "path\to\your\ATV.zip"
-```
+## Literal combiner programs from a GPU capture
 
-That script does not generate `nv2a_gpu_literal_programs.h`. Restore the
-second header only from your own local v126 development files; if it is
-unavailable, use the public fallback and label any performance result as a
-fallback run. Neither header belongs in a public commit, release asset, or
-support ZIP. They are ignored by the runtime fork's `.gitignore`; keep the
-local copies out of your published patch as well.
+The second generator **does exist**: `tools/generate_qpr2_literal_materials.py`.
+It requires `tools/fixtures/qpr2-literal-programs.json`, captured from the
+running game. Neither that JSON nor its generated output belongs in the
+public fork.
+
+1. Run the QPR2 build with your own game files. `rebuild-and-run.ps1` sets
+   `RECOMP_GPU_CAPTURE` to a local path in the run's `logs/` directory.
+   Press **F8** in a 3D menu, preview, and race to capture GPU states. A capture
+   closes after two frames. Copy/rename each completed `.bin` capture before
+   pressing F8 again; the next request overwrites the configured path.
+2. From the QPR2 repo root, pass all saved captures to the extractor. Add
+   further captures if it says any of the three exact shapes or the three
+   variants of class 2 are missing:
+
+   ```powershell
+   py -3 tools/extract_qpr2_literal_programs.py `
+     "logs\menu-capture.bin" "logs\preview-capture.bin" "logs\race-capture.bin"
+   ```
+
+3. Generate the two local files from the exact-shape fixture:
+
+   ```powershell
+   py -3 tools/generate_qpr2_literal_materials.py
+   ```
+
+   This writes `third_party/xboxrecomp/src/kernel/nv2a_gpu_literal_programs.h`
+   (CPU classifier and fixtures) **and**
+   `third_party/xboxrecomp/src/kernel/nv2a_gpu_literal.inc` (literal GPU
+   material bodies). The build then regenerates the ignored
+   `nv2a_gpu_shader.h` from local HLSL and include sources.
+
+The extractor checks SHA-256 fingerprints of the three v126 instruction shapes
+and their final variants. It fails on incomplete or different captures rather
+than silently selecting a different program. More than one capture is usually
+needed; a single F8 request is only two frames. Exact v126 output SHA-256s:
+
+| Generated file | SHA-256 |
+| --- | --- |
+| `nv2a_vsh_compiled.h` | `6347a41fa83a2dfae848e6398573eb5b46b37334b363c068c7b46119b7ff357d` |
+| `nv2a_gpu_literal_programs.h` | `169bc9b0d0d421273d8705d924ce486afa310cba0edee5868d532bd1ef87e178` |
+| `nv2a_gpu_literal.inc` | `e15bc49d65080a033479c3d065400543fa7e3970f0eb7942353abfd051e71f7c` |
+
+The vertex hash assumes the same extracted archive and generator version.
+The literal hashes assume the same v126 shapes and generator version.
+Captured `.bin` files contain more than combiner words; keep them private.
+
+If you already have the three files in your local v126 checkout, copy them
+into the same paths in a separate v0.16 trial clone. Do not copy the old
+`nv2a_gpu_shader.h`: the build creates it from the selected local includes.
 
 ## Before publishing
 
-- Check `git status` and the staged diff in both the QPR2 repository and its
-  `third_party/xboxrecomp` submodule. Verify that the two shader headers are
-  untracked/ignored and absent from the commit tree. Ignore rules do not
-  protect files already force-added.
-- Exclude `game/`, `src/generated/`, `src/recomp/gen/`, `analysis/`,
-  retail executables, archives, saves, RAM dumps, and logs containing
-  extracted game content. Recheck any new paths outside the usual directories.
-- Preserve the MIT and third-party notices in the XboxRecomp fork, including
-  the xemu-derived LGPL material and corresponding source. See
-  [ATTRIBUTION.md](ATTRIBUTION.md) and the fork's licenses.
-- Test a clean public clone separately from the game-specific local setup;
-  state which one was tested when reporting build success or race FPS.
+The fork tracks a **generic placeholder** `nv2a_gpu_literal.inc`; local
+generation modifies it. Do not stage that local change. The two local
+headers, fixture, and generated embedded shader header are ignored, but an
+ignore rule does not protect a file deliberately force-added. Check the
+staged diff **in both repositories**. Exclude `game/`, `src/generated/`,
+`src/recomp/gen/`, `analysis/`, saves, captures, shader caches, and logs
+containing game data. Retain XboxRecomp's original licenses and notices.
 
-The public fork contains the runtime modifications, not the two optional
-shader tables. The separate QPR2 v0.16 trial branch pins the experimental
-runtime commit and does not change `main`.
+Older public fork commits contained generated literal bodies and an embedded
+shader header. Removing files from the latest tree does not erase those
+earlier Git objects. Treat that history as requiring a separate publication
+review before advertising the fork as free of game-derived data.

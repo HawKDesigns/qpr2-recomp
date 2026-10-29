@@ -36,27 +36,9 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/generated/qpr2_build_config.h")
         "QPR2 build metadata is missing. Run: py -3 tools/qpr2_pipeline.py analyze")
 endif()
 
-# Re-embed shader sources whenever HLSL, shared layout or scalar kernel changes.
-# The generated header is checked in for tools; the build keeps it current.
-set(QPR2_SHADER_ROOT "${XBOXRECOMP_DIR}/src/kernel")
-set(QPR2_SHADER_INPUTS)
-foreach(name nv2a_gpu_raster.hlsl nv2a_gpu_rov.hlsl nv2a_gpu_report_reset.hlsl
-             nv2a_gpu_coverage.hlsl nv2a_gpu_clear.hlsl nv2a_gpu_types.h
-             nv2a_gpu_pixel.inc nv2a_gpu_literal.inc nv2a_gpu_compact.inc nv2a_gpu_shade.inc nv2a_gpu_source.inc nv2a_gpu_geometry.hlsl nv2a_gpu_texcopy.hlsl
-             nv2a_gpu_raw_types.h nv2a_gpu_vsh.inc nv2a_gpu_prepare.inc)
-    list(APPEND QPR2_SHADER_INPUTS "${QPR2_SHADER_ROOT}/${name}")
-endforeach()
-add_custom_command(OUTPUT "${QPR2_SHADER_ROOT}/nv2a_gpu_shader.h"
-    COMMAND "${CMAKE_COMMAND}" "-DINPUT_ROOT=${QPR2_SHADER_ROOT}"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/embed_qpr2_gpu_shader.cmake"
-    DEPENDS ${QPR2_SHADER_INPUTS} "${CMAKE_CURRENT_SOURCE_DIR}/tools/embed_qpr2_gpu_shader.cmake"
-    VERBATIM)
-add_custom_target(qpr2_gpu_shader_sources DEPENDS "${QPR2_SHADER_ROOT}/nv2a_gpu_shader.h")
-
+# XboxRecomp embeds GPU shaders at build time from the local sources.
 add_subdirectory("${XBOXRECOMP_DIR}" "${CMAKE_BINARY_DIR}/xboxrecomp")
 
-add_dependencies(xbox_kernel qpr2_gpu_shader_sources)
-add_dependencies(xboxrecomp qpr2_gpu_shader_sources)
 
 add_executable(${PROJECT_NAME} WIN32
     src/main.c

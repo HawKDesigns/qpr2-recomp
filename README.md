@@ -19,10 +19,10 @@ git clone --branch qpr2-v016-experimental --recurse-submodules https://github.co
 
 Supply your own `game/` contents and generate the local recompilation
 output as described below. For a meaningful performance comparison with your
-working v126 checkout, also copy your two locally generated shader headers
-(`nv2a_vsh_compiled.h` and `nv2a_gpu_literal_programs.h`) into
+working v126 checkout, also copy three locally generated files (`nv2a_vsh_compiled.h`,
+`nv2a_gpu_literal_programs.h`, and `nv2a_gpu_literal.inc`) into
 `third_party/xboxrecomp/src/kernel/` in this separate clone. A fresh public
-clone omits them and takes fallback paths. See [PUBLISHING.md](PUBLISHING.md)
+clone uses generic shader paths until you generate these files locally. See [PUBLISHING.md](PUBLISHING.md)
 for exact local steps and for what must remain outside public commits.
 
 Run `rebuild-and-run.ps1`; it writes to `build-diagnostic-v016/` and
