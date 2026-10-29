@@ -68,6 +68,14 @@ The pipeline examines all code-bearing XBE sections, not only `.text`. Do not
 commit or share `game/`, generated translations, saves, memory dumps, or other
 retail-derived artifacts.
 
+
+For v126 race performance comparisons, generate the local shader programs in
+[PUBLISHING.md](PUBLISHING.md) **before** running the launcher. A clean checkout
+can build and play using generic fallbacks, but the original v126 performance
+run used 180 native vertex variants and all three literal material classes.
+The launcher prints the state of the three local files and includes
+`shader-status.txt` in its results ZIP. The generated files stay local.
+
 ## Run the current diagnostic build
 
 The repository contains the cumulative v126 source. Clone with submodules,

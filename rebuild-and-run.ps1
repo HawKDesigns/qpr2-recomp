@@ -14,6 +14,35 @@ New-Item -ItemType Directory -Force $runLogDir | Out-Null
 # timestamps to invalidate previously compiled MSBuild objects.
 $diagnosticBuildDir = Join-Path $PWD "build-diagnostic-v126"
 
+
+# A clean checkout still runs with generic shader fallbacks, but its race FPS
+# is not comparable to the original v126 diagnostic until the local programs
+# are generated. Check exact v126 fingerprints before starting the build.
+$shaderSpecs = @(
+    @{ Name = "native vertex"; Path = "third_party/xboxrecomp/src/kernel/nv2a_vsh_compiled.h"; Hash = "6347a41fa83a2dfae848e6398573eb5b46b37334b363c068c7b46119b7ff357d" },
+    @{ Name = "literal classifier"; Path = "third_party/xboxrecomp/src/kernel/nv2a_gpu_literal_programs.h"; Hash = "169bc9b0d0d421273d8705d924ce486afa310cba0edee5868d532bd1ef87e178" },
+    @{ Name = "literal GPU bodies"; Path = "third_party/xboxrecomp/src/kernel/nv2a_gpu_literal.inc"; Hash = "e15bc49d65080a033479c3d065400543fa7e3970f0eb7942353abfd051e71f7c" }
+)
+$shaderStatus = @()
+foreach ($spec in $shaderSpecs) {
+    $file = Join-Path $PWD $spec.Path
+    $state = "missing"
+    if (Test-Path -LiteralPath $file -PathType Leaf) {
+        $actual = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -eq $spec.Hash) { $state = "ready" }
+        else { $state = "different hash (may be a different generator or build)" }
+    }
+    $shaderStatus += "$($spec.Name): $state"
+}
+$shaderStatus | Set-Content (Join-Path $runLogDir "shader-status.txt")
+$shaderStatus | ForEach-Object { Write-Host "[SHADER-STATUS] $_" }
+if ($shaderStatus -match "missing|different hash") {
+    Write-Warning "Local v126 shader programs are incomplete; generic fallbacks can substantially lower race FPS."
+    Write-Host "See PUBLISHING.md: compile_qpr2_vertex_programs.py with your ATV.zip,"
+    Write-Host "then extract_qpr2_literal_programs.py from F8 captures and run"
+    Write-Host "generate_qpr2_literal_materials.py before comparing performance."
+}
+
 # V53 builds the supplied generation and bounded recovered callbacks.
 # Do not run the V22 rollback or regenerate the full lift here.
 Write-Host "Configuring QPR2 diagnostic overlay v126..."
@@ -318,7 +347,7 @@ Write-Host "Kept this run in $runLogDir (earlier attempts remain in their own fo
 if (Test-Path ".\xbox_kernel.log") {
     Copy-Item -Force ".\xbox_kernel.log" "$runLogDir\one-hundred-twenty-sixth-kernel.log"
 }
-$results = @(Get-ChildItem "$runLogDir\diagnostic-v126-*", "$runLogDir\one-hundred-twenty-sixth-*" -File)
+$results = @(Get-ChildItem "$runLogDir\diagnostic-v126-*", "$runLogDir\one-hundred-twenty-sixth-*", "$runLogDir\shader-status.txt" -File)
 if ($results.Count -gt 0) {
     Compress-Archive -LiteralPath $results.FullName -DestinationPath ".\logs\qpr2-v126-results.zip" -Force
     Write-Host "Results archived: $PWD\logs\qpr2-v126-results.zip"
