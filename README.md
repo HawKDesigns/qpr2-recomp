@@ -17,9 +17,16 @@ still need comparison against v126. Test from a separate directory:
 git clone --branch qpr2-v016-experimental --recurse-submodules https://github.com/HawKDesigns/qpr2-recomp.git qpr2-v016-test
 ```
 
-Supply your own `game/` contents, generate the local recompilation output as
-described below, and run `rebuild-and-run.ps1`. The launcher writes to
-`build-diagnostic-v016/` and `logs/qpr2-v016-results.zip`. See the fork's
+Supply your own `game/` contents and generate the local recompilation
+output as described below. For a meaningful performance comparison with your
+working v126 checkout, also copy your two locally generated shader headers
+(`nv2a_vsh_compiled.h` and `nv2a_gpu_literal_programs.h`) into
+`third_party/xboxrecomp/src/kernel/` in this separate clone. A fresh public
+clone omits them and takes fallback paths. See [PUBLISHING.md](PUBLISHING.md)
+for exact local steps and for what must remain outside public commits.
+
+Run `rebuild-and-run.ps1`; it writes to `build-diagnostic-v016/` and
+`logs/qpr2-v016-results.zip`. See the fork's
 `docs/QPR2_V016_INTEGRATION.md` for the merge limits. Keep the v126 checkout
 available for a same-track comparison.
 
