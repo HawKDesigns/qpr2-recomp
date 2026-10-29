@@ -41,3 +41,6 @@ __pycache__/
 /tools/benchmark-v*.json
 /tools/*-evidence.json
 /tools/v*-changed-files.txt
+
+# Captured game-specific combiner shapes; regenerated per local game copy.
+/tools/fixtures/qpr2-literal-programs.json

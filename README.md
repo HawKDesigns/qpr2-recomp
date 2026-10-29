@@ -135,6 +135,6 @@ See [ATTRIBUTION.md](ATTRIBUTION.md) for the tool, reference-project, and
 third-party notices. If publishing a modified `xboxrecomp` runtime, preserve
 its own MIT notice, the xemu-derived LGPL notices, and the corresponding
 source and license text. The repository should contain no original game files
-or generated translations of the retail executable. The v126 runtime includes
-game-derived shader tables that need to be generated locally or reviewed
-before a public fork is committed; see [PUBLISHING.md](PUBLISHING.md).
+or generated translations of the retail executable. The optional v126 shader specializations are generated locally from your
+own extracted archive and GPU captures. See [PUBLISHING.md](PUBLISHING.md)
+for both repeatable steps and the publication review.
