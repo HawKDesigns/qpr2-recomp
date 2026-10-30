@@ -51,7 +51,9 @@ extracted ATV folder**. It is not a ZIP found directly on the disc.
    ```
 
 This writes `third_party/xboxrecomp/src/kernel/nv2a_vsh_compiled.h`.
-It matches complete shader instruction words and uses live constants.
+It matches complete shader instruction words and uses live constants. Once
+`game/ATV.zip` exists, the current launcher can also generate this file before
+building.
 
 ## Literal combiner programs from a GPU capture
 
@@ -85,7 +87,9 @@ program bodies local.
    (CPU classifier and fixtures) **and**
    `third_party/xboxrecomp/src/kernel/nv2a_gpu_literal.inc` (literal GPU
    material bodies). The build then regenerates the ignored
-   `nv2a_gpu_shader.h` from local HLSL and include sources.
+   `nv2a_gpu_shader.h` from local HLSL and include sources. Once the exact-shape
+   JSON fixture exists, the current launcher can generate these two files
+   before building.
 
 The extractor checks SHA-256 fingerprints of the three v126 instruction shapes
 and their final variants. It fails on incomplete or different captures rather

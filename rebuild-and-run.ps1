@@ -15,6 +15,28 @@ New-Item -ItemType Directory -Force $runLogDir | Out-Null
 $diagnosticBuildDir = Join-Path $PWD "build-diagnostic-v126"
 
 
+# Rebuild locally derived specializations before compiling. Extraction creates
+# the material fixture; it does not install shader code by itself. Both inputs
+# remain under ignored paths and never enter the public repository.
+$nativeHeader = "third_party/xboxrecomp/src/kernel/nv2a_vsh_compiled.h"
+$literalHeader = "third_party/xboxrecomp/src/kernel/nv2a_gpu_literal_programs.h"
+$literalBody = "third_party/xboxrecomp/src/kernel/nv2a_gpu_literal.inc"
+if ((Test-Path ".\\game\\ATV.zip" -PathType Leaf) -and
+    -not (Test-Path $nativeHeader -PathType Leaf)) {
+    Write-Host "[SHADER-BUILD] Compiling native vertex variants from game/ATV.zip"
+    & py -3 tools/compile_qpr2_vertex_programs.py ".\\game\\ATV.zip"
+    if ($LASTEXITCODE -ne 0) { throw "Native vertex generation failed: $LASTEXITCODE" }
+}
+if ((Test-Path "tools/fixtures/qpr2-literal-programs.json" -PathType Leaf) -and
+    ((-not (Test-Path $literalHeader -PathType Leaf)) -or
+     (-not (Test-Path $literalBody -PathType Leaf)) -or
+     ((Get-FileHash -LiteralPath $literalHeader -Algorithm SHA256).Hash.ToLowerInvariant() -ne "169bc9b0d0d421273d8705d924ce486afa310cba0edee5868d532bd1ef87e178") -or
+     ((Get-FileHash -LiteralPath $literalBody -Algorithm SHA256).Hash.ToLowerInvariant() -ne "e15bc49d65080a033479c3d065400543fa7e3970f0eb7942353abfd051e71f7c"))) {
+    Write-Host "[SHADER-BUILD] Generating literal material programs from local capture fixture"
+    & py -3 tools/generate_qpr2_literal_materials.py
+    if ($LASTEXITCODE -ne 0) { throw "Literal material generation failed: $LASTEXITCODE" }
+}
+
 # A clean checkout still runs with generic shader fallbacks, but its race FPS
 # is not comparable to the original v126 diagnostic until the local programs
 # are generated. Check exact v126 fingerprints before starting the build.

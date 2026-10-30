@@ -73,12 +73,14 @@ BAHHHD-Extract, and ZIP layout steps in [PUBLISHING.md](PUBLISHING.md#vertex-pro
 `game/` so they remain ignored by Git.
 
 
-For v126 race performance comparisons, generate the local shader programs in
-[PUBLISHING.md](PUBLISHING.md) **before** running the launcher. A clean checkout
-can build and play using generic fallbacks, but the original v126 performance
-run used 180 native vertex variants and all three literal material classes.
-The launcher prints the state of the three local files and includes
-`shader-status.txt` in its results ZIP. The generated files stay local.
+For v126 race performance comparisons, prepare `game/ATV.zip` and the
+three-shape capture fixture as described in [PUBLISHING.md](PUBLISHING.md).
+The launcher generates missing native vertex variants and literal material
+programs from those local inputs before building. A clean checkout can build
+and play using generic fallbacks, but the original v126 performance run used
+180 native vertex variants and all three literal material classes. Check the
+three `[SHADER-STATUS]` lines for `ready`; `shader-status.txt` is included in
+the results ZIP. The generated files stay local.
 
 ## Run the current diagnostic build
 
