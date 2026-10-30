@@ -136,12 +136,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("captures", nargs="+", type=Path, help="local v126 stderr .log files or F8 .bin captures")
     parser.add_argument("--output", type=Path, default=Path("tools/fixtures/qpr2-literal-programs.json"))
+    parser.add_argument("--quiet-incomplete", action="store_true",
+                        help="report missing states briefly when learning from ordinary runs")
     args = parser.parse_args()
-    programs = extract(args.captures)
+    try:
+        programs = extract(args.captures)
+    except ValueError as exc:
+        if not args.quiet_incomplete:
+            raise
+        print(f"[SHADER-LEARN] {exc}")
+        return 2
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(programs, indent=2) + "\n")
     print(f"Recovered {len(programs)} exact material shapes from {len(args.captures)} input(s): {args.output}")
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
