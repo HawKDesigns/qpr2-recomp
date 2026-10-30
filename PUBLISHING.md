@@ -55,43 +55,38 @@ It matches complete shader instruction words and uses live constants. Once
 `game/ATV.zip` exists, the current launcher can also generate this file before
 building.
 
-## Literal combiner programs from a normal run log
+## Literal combiner programs from ordinary play
 
-`tools/generate_qpr2_literal_materials.py` requires the local
-`tools/fixtures/qpr2-literal-programs.json`. The fixture contains complete
-instruction-word arrays, unlike the public hashes and numeric identifiers.
-Keep the JSON and generated shader files local.
+The complete shader instruction words and captured GPU state stay in each
+user's checkout. The launcher learns the three reviewed material shapes from
+its own ordinary stderr logs; no F8 snapshots, timed captures, or manual
+extractor commands are required.
 
-1. Run your own game through a 3D menu, preview, and race. The normal v126
-   stderr log records each distinct `[GPU-MATERIAL-PROGRAM]` state. You do
-   **not** need to time F8 snapshots. The launcher saves each run under its
-   own `logs/v126-run-*/` folder.
-2. From the QPR2 repo root, extract the exact shapes from that run's log:
+1. Prepare `game/ATV.zip` and launch `rebuild-and-run.ps1`. This first
+   run uses the generic material fallback if no local fixture exists. Play
+   normally through a 3D menu, preview, and race, then close the game.
+2. After the game exits, the launcher scans its saved run logs and writes
+   `tools/fixtures/qpr2-literal-programs.json` only after all three exact
+   shapes and the three class-2 final variants have been observed. Earlier
+   runs count too, so a partial first run is fine.
+3. Launch `rebuild-and-run.ps1` again. It generates both local files
+   automatically: `third_party/xboxrecomp/src/kernel/nv2a_gpu_literal_programs.h`
+   and `third_party/xboxrecomp/src/kernel/nv2a_gpu_literal.inc`. CMake
+   re-embeds the GPU shader and recompiles code that previously used the
+   fallback. The second run should report all three `[SHADER-STATUS]`
+   entries as `ready`.
 
-   ```powershell
-   $log = Get-ChildItem .\logs\v126-run-*\one-hundred-twenty-sixth-run.stderr.log |
-     Sort-Object LastWriteTime -Descending | Select-Object -First 1
-   py -3 tools/extract_qpr2_literal_programs.py $log.FullName
-   ```
+This is a one-time learning pass per matching game build. If you have old
+normal stderr logs from before this launcher update, the next launch scans
+them before building, so it can skip the learning pass. If a class has not
+appeared yet, keep playing normally; the launcher reports how many variants
+it still needs. For advanced diagnosis, the extractor still accepts logs or
+F8 `.bin` files manually:
 
-   If the newest log lacks any required state, pass additional completed
-   menu/preview/race stderr logs to the same command. The extractor also
-   accepts saved F8 `.bin` captures as optional inputs.
-3. Generate **both** local files from the fixture:
-
-   ```powershell
-   py -3 tools/generate_qpr2_literal_materials.py
-   ```
-
-   This writes `third_party/xboxrecomp/src/kernel/nv2a_gpu_literal_programs.h`
-   (CPU classifier and fixtures) **and**
-   `third_party/xboxrecomp/src/kernel/nv2a_gpu_literal.inc` (literal GPU
-   material bodies). The build then regenerates the ignored
-   `nv2a_gpu_shader.h` from local HLSL and include sources. Once the exact-shape
-   JSON fixture exists, the current launcher can generate these two files
-   before building. Verify that **both** files exist and the `.inc` is
-   generated rather than the 94-byte placeholder; their expected hashes
-   appear below.
+```powershell
+py -3 tools/extract_qpr2_literal_programs.py ".\\logs\\v126-run-...\\one-hundred-twenty-sixth-run.stderr.log"
+py -3 tools/generate_qpr2_literal_materials.py
+```
 
 The extractor checks SHA-256 fingerprints of the three v126 instruction shapes
 and their final variants. These words are program instructions, not frame
@@ -108,7 +103,10 @@ in the v126 test. Exact v126 output SHA-256s:
 | `nv2a_gpu_literal_programs.h` | `169bc9b0d0d421273d8705d924ce486afa310cba0edee5868d532bd1ef87e178` |
 | `nv2a_gpu_literal.inc` | `e15bc49d65080a033479c3d065400543fa7e3970f0eb7942353abfd051e71f7c` |
 
-The vertex hash assumes the same extracted archive and generator version.
+The vertex file hash assumes the same extracted ZIP bytes and generator
+version. The launcher also recognizes the original vertex program output
+after replacing only the ZIP SHA-256 comment with a stable marker; this
+accepts equivalent programs repacked with different ZIP metadata.
 The literal hashes assume the same v126 shapes, fork source and generator
 version. The original v126 embedded shader header has SHA-256
 `0e50cf80daa37174a94dc3c85feec8cf2744b3d3359eed8ab1e54a1b90a35465`.
@@ -116,8 +114,8 @@ The pinned fork now checks embedded shader source content on each build,
 including when ZIP extraction preserves older file timestamps.
 Run logs and optional captured `.bin` files contain game-derived state; keep them private.
 
-If you already have the three files in your local v126 checkout, copy them
-into the same paths in a separate v0.16 trial clone. Do not copy the old
+If you already have the three generated shader files in your local v126
+checkout, you may copy them into a fresh checkout. Do not copy the old
 `nv2a_gpu_shader.h`: the build creates it from the selected local includes.
 
 ## Before publishing
