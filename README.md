@@ -86,19 +86,22 @@ BAHHHD-Extract, and ZIP layout steps in [PUBLISHING.md](PUBLISHING.md#vertex-pro
 `game/` so they remain ignored by Git.
 
 
-For v126 race performance comparisons, prepare `game/ATV.zip` and the
-three-shape fixture from a normal v126 stderr log as described in [PUBLISHING.md](PUBLISHING.md).
-The launcher generates missing native vertex variants and literal material
-programs from those local inputs before building. The pinned XboxRecomp fork
-rechecks the embedded shader content and recompiles the optional program users
-when the local headers appear after an earlier generic build. A clean checkout
-can build and play using generic fallbacks, but the original v126 performance
-run used 180 native vertex variants and all three literal material classes. Check the
-three `[SHADER-STATUS]` lines for `ready`; `shader-status.txt` is included in
-the results ZIP. After the build, `[SHADER-EMBED]` reports whether the GPU
-shader header matches the original v126 embedded shader. If Python exits during
-generation, the launcher keeps separate `shader-generation.*` logs in that run
-directory. The generated files stay local.
+For comparable v126 race performance, prepare `game/ATV.zip` from your
+own extracted disc. The launcher generates the 180 native vertex variants
+automatically. During the first ordinary playthrough of a 3D menu, preview,
+and race, it learns the reviewed material shapes from its own stderr log.
+Close the game and launch `rebuild-and-run.ps1` again: it generates all three
+literal material classes and rebuilds with the fast path. **No F8 capture
+or manual extraction command is required.** If the first run does not reach
+all required material states, further ordinary runs accumulate them.
+
+The pinned XboxRecomp fork rechecks the embedded shader content and recompiles
+the optional program users when the local headers appear after an earlier
+generic build. Check all three `[SHADER-STATUS]` lines for `ready` on the
+second launch; `shader-status.txt` is included in the results ZIP. After
+building, `[SHADER-EMBED]` verifies the GPU shader against the original v126
+source. The capture fixture and generated shader files stay local.
+See [PUBLISHING.md](PUBLISHING.md) for validation and troubleshooting.
 
 ## Run the current diagnostic build
 
@@ -168,5 +171,5 @@ third-party notices. If publishing a modified `xboxrecomp` runtime, preserve
 its own MIT notice, the xemu-derived LGPL notices, and the corresponding
 source and license text. The repository should contain no original game files
 or generated translations of the retail executable. The optional v126 shader specializations are generated locally from your
-own extracted archive and GPU captures. See [PUBLISHING.md](PUBLISHING.md)
-for both repeatable steps and the publication review.
+own extracted archive and ordinary run logs. See [PUBLISHING.md](PUBLISHING.md)
+for the repeatable steps and publication review.
