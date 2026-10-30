@@ -97,7 +97,7 @@ $shaderStatus | ForEach-Object { Write-Host "[SHADER-STATUS] $_" }
 if ($shaderStatus -match "missing|different hash") {
     Write-Warning "Local v126 shader programs are incomplete; generic fallbacks can substantially lower race FPS."
     Write-Host "See PUBLISHING.md: compile_qpr2_vertex_programs.py with your ATV.zip,"
-    Write-Host "then extract_qpr2_literal_programs.py from F8 captures and run"
+    Write-Host "then extract_qpr2_literal_programs.py from a normal stderr run log and run"
     Write-Host "generate_qpr2_literal_materials.py before comparing performance."
 }
 
@@ -113,6 +113,23 @@ Write-Host "Building QPR2 diagnostic overlay v126..."
 $buildExit = $LASTEXITCODE
 $buildExit | Set-Content "$runLogDir\diagnostic-v126-build.exitcode.txt"
 if ($buildExit -ne 0) { throw "Build failed: $buildExit. Send diagnostic-v126-build.log." }
+
+# The original fast v126 build embedded the three literal bodies into this
+# header. A copied .inc can be older than a previously built generic header;
+# check the actual embedded bytes before spending time on a race comparison.
+$expectedEmbeddedHash = "0e50cf80daa37174a94dc3c85feec8cf2744b3d3359eed8ab1e54a1b90a35465"
+$embeddedShader = Join-Path $PWD "third_party/xboxrecomp/src/kernel/nv2a_gpu_shader.h"
+$embeddedHash = "missing"
+if (Test-Path -LiteralPath $embeddedShader -PathType Leaf) {
+    $embeddedHash = (Get-FileHash -LiteralPath $embeddedShader -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+$embeddedStatus = "path=$embeddedShader sha256=$embeddedHash expected=$expectedEmbeddedHash"
+$embeddedStatus | Set-Content (Join-Path $runLogDir "shader-embed-status.txt")
+Write-Host "[SHADER-EMBED] $embeddedStatus"
+$allShadersReady = @($shaderStatus | Where-Object { $_ -match "missing|different hash" }).Count -eq 0
+if ($allShadersReady -and $embeddedHash -ne $expectedEmbeddedHash) {
+    throw "Embedded GPU shader differs from the original v126 build. See $runLogDir\shader-embed-status.txt; update the QPR2 xboxrecomp submodule and rebuild."
+}
 
 # V108 removes the V107 live-depth experiment; clear an inherited override.
 $env:RECOMP_GPU_LIVE_DEPTH = "0"
@@ -405,7 +422,7 @@ Write-Host "Kept this run in $runLogDir (earlier attempts remain in their own fo
 if (Test-Path ".\xbox_kernel.log") {
     Copy-Item -Force ".\xbox_kernel.log" "$runLogDir\one-hundred-twenty-sixth-kernel.log"
 }
-$results = @(Get-ChildItem "$runLogDir\diagnostic-v126-*", "$runLogDir\one-hundred-twenty-sixth-*", "$runLogDir\shader-status.txt", "$runLogDir\shader-generation.*" -File)
+$results = @(Get-ChildItem "$runLogDir\diagnostic-v126-*", "$runLogDir\one-hundred-twenty-sixth-*", "$runLogDir\shader-status.txt", "$runLogDir\shader-embed-status.txt", "$runLogDir\shader-generation.*" -File)
 if ($results.Count -gt 0) {
     Compress-Archive -LiteralPath $results.FullName -DestinationPath ".\logs\qpr2-v126-results.zip" -Force
     Write-Host "Results archived: $PWD\logs\qpr2-v126-results.zip"

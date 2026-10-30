@@ -94,8 +94,11 @@ Keep the JSON and generated shader files local.
    appear below.
 
 The extractor checks SHA-256 fingerprints of the three v126 instruction shapes
-and their final variants. It fails on incomplete or different logs/captures
-rather than silently selecting a different program. A normal run log from
+and their final variants. These words are program instructions, not frame
+coordinates or live constants, so the same tested game build executing the
+same materials produces the same shapes. Other game revisions need their own
+review; the extractor fails on different instruction shapes rather than
+silently selecting an untested program. A normal run log from
 menu through race contained all three classes and all three class-2 variants
 in the v126 test. Exact v126 output SHA-256s:
 
@@ -106,7 +109,11 @@ in the v126 test. Exact v126 output SHA-256s:
 | `nv2a_gpu_literal.inc` | `e15bc49d65080a033479c3d065400543fa7e3970f0eb7942353abfd051e71f7c` |
 
 The vertex hash assumes the same extracted archive and generator version.
-The literal hashes assume the same v126 shapes and generator version.
+The literal hashes assume the same v126 shapes, fork source and generator
+version. The original v126 embedded shader header has SHA-256
+`0e50cf80daa37174a94dc3c85feec8cf2744b3d3359eed8ab1e54a1b90a35465`.
+The pinned fork now checks embedded shader source content on each build,
+including when ZIP extraction preserves older file timestamps.
 Run logs and optional captured `.bin` files contain game-derived state; keep them private.
 
 If you already have the three files in your local v126 checkout, copy them

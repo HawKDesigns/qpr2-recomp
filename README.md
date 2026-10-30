@@ -52,6 +52,19 @@ cd qpr2-recomp
 py -3 -m pip install capstone
 ```
 
+For an existing Git checkout, update both the QPR2 repo and its pinned
+XboxRecomp submodule:
+
+```powershell
+git pull --ff-only
+git submodule update --init --recursive
+```
+
+If you downloaded ZIPs instead, use the fork's
+`qpr2-v126` branch for `third_party/xboxrecomp/`; its default `main`
+is the upstream v0.16 code. Keep your local generated shader files when
+refreshing that folder.
+
 Extract your disc into `game/`. The recompilation pipeline creates local files
 in `analysis/`, `src/generated/`, and `src/recomp/gen/`; these are derived from
 the supplied executable and are not checked in. If setting up from a fresh
@@ -76,12 +89,16 @@ BAHHHD-Extract, and ZIP layout steps in [PUBLISHING.md](PUBLISHING.md#vertex-pro
 For v126 race performance comparisons, prepare `game/ATV.zip` and the
 three-shape fixture from a normal v126 stderr log as described in [PUBLISHING.md](PUBLISHING.md).
 The launcher generates missing native vertex variants and literal material
-programs from those local inputs before building. A clean checkout can build
-and play using generic fallbacks, but the original v126 performance run used
-180 native vertex variants and all three literal material classes. Check the
+programs from those local inputs before building. The pinned XboxRecomp fork
+rechecks the embedded shader content and recompiles the optional program users
+when the local headers appear after an earlier generic build. A clean checkout
+can build and play using generic fallbacks, but the original v126 performance
+run used 180 native vertex variants and all three literal material classes. Check the
 three `[SHADER-STATUS]` lines for `ready`; `shader-status.txt` is included in
-the results ZIP. If Python exits during generation, the launcher keeps separate
-`shader-generation.*` logs in that run directory. The generated files stay local.
+the results ZIP. After the build, `[SHADER-EMBED]` reports whether the GPU
+shader header matches the original v126 embedded shader. If Python exits during
+generation, the launcher keeps separate `shader-generation.*` logs in that run
+directory. The generated files stay local.
 
 ## Run the current diagnostic build
 
