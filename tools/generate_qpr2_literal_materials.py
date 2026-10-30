@@ -63,8 +63,10 @@ header+='    default:break;\n    }\n}\n#endif\n';out+='#endif\n'
 for name,content in [('nv2a_gpu_literal.inc',out),('nv2a_gpu_literal_programs.h',header)]:
  target=k/name
  print(f'[LITERAL-GEN] checking {name}', flush=True)
- if not target.exists() or target.read_text()!=content:
+ encoded=content.encode('utf-8')
+ if not target.exists() or target.read_bytes()!=encoded:
   print(f'[LITERAL-GEN] writing {name}', flush=True)
-  target.write_text(content)
+  with target.open('w', encoding='utf-8', newline='\n') as stream:
+   stream.write(content)
  print(f'[LITERAL-GEN] ready {name}', flush=True)
 print('Generated 3 exact material bodies and CPU classifier')

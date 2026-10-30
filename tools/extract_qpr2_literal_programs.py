@@ -1,10 +1,11 @@
-"""Recreate QPR2's three exact literal material shapes from local GPU captures.
+"""Recreate QPR2's three exact literal material shapes from local run logs.
 
-From the repository root, run a race with RECOMP_GPU_CAPTURE set to a local
-capture filename, press F8 in each scene to capture two frames, and pass the
-resulting files here. Captures and the resulting JSON contain game-derived
-state and must remain local. The fingerprints are of exact state words, so
-the script fails rather than silently selecting a different material.
+Pass the v126 stderr log from a normal run through a 3D menu, preview, and
+race. [GPU-MATERIAL-PROGRAM] records include each distinct combiner state;
+F8 captures (.bin) remain supported but are not required. Logs, captures,
+and the resulting JSON contain game-derived state and must remain local.
+The fingerprints are of exact state words, so incomplete or different input
+fails rather than silently selecting an unreviewed material.
 """
 import argparse
 import hashlib
@@ -34,7 +35,41 @@ def digest(words):
     return hashlib.sha256(struct.pack("<%dI" % len(words), *words)).hexdigest()
 
 
+def log_states(path):
+    """Read per-program combiner snapshots emitted by the normal v126 run."""
+    keys = ("id", "control", "stages", "final0", "final1", *FIELDS)
+    seen = 0
+    with path.open("r", encoding="utf-8", errors="replace") as stream:
+        for line_number, line in enumerate(stream, 1):
+            if not line.startswith("[GPU-MATERIAL-PROGRAM] "):
+                continue
+            seen += 1
+            try:
+                record = dict(part.split("=", 1) for part in line.split()[1:])
+                if not all(key in record for key in keys):
+                    raise ValueError("missing field")
+                words = [0] * 54
+                for i, key in enumerate(FIELDS):
+                    values = record[key].split(",")
+                    if len(values) != 8 or any(len(value) != 8 for value in values):
+                        raise ValueError(f"{key} must contain eight instruction words")
+                    words[i * 8:i * 8 + 8] = [int(value, 16) for value in values]
+                for index, key in ((48, "final0"), (49, "final1"),
+                                   (52, "control"), (53, "stages")):
+                    if len(record[key]) != 8:
+                        raise ValueError(f"{key} must be an eight-digit word")
+                    words[index] = int(record[key], 16)
+            except (ValueError, KeyError) as exc:
+                raise ValueError(f"{path}:{line_number}: invalid material program: {exc}") from exc
+            yield words
+    if not seen:
+        raise ValueError(f"{path}: no GPU-MATERIAL-PROGRAM records; use the v126 stderr log after a 3D scene")
+
+
 def states(path):
+    if path.suffix.lower() != ".bin":
+        yield from log_states(path)
+        return
     with path.open("rb") as stream:
         header = stream.read(16)
         if len(header) != 16:
@@ -93,19 +128,19 @@ def extract(paths):
             raise ValueError(f"class {cls}: unexpected final variants; check capture and game version")
         item["final0"] = item["finals"][0]
     if missing:
-        raise ValueError("Incomplete capture; repeat F8 in preview, race and menus: " + ", ".join(missing))
+        raise ValueError("Incomplete input; pass stderr logs from menu, preview and race: " + ", ".join(missing))
     return [found[cls] for cls in (1, 2, 3)]
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("captures", nargs="+", type=Path, help="local F8 GPU capture .bin files")
+    parser.add_argument("captures", nargs="+", type=Path, help="local v126 stderr .log files or F8 .bin captures")
     parser.add_argument("--output", type=Path, default=Path("tools/fixtures/qpr2-literal-programs.json"))
     args = parser.parse_args()
     programs = extract(args.captures)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(programs, indent=2) + "\n")
-    print(f"Recovered {len(programs)} exact material shapes from {len(args.captures)} capture(s): {args.output}")
+    print(f"Recovered {len(programs)} exact material shapes from {len(args.captures)} input(s): {args.output}")
 
 
 if __name__ == "__main__":

@@ -74,7 +74,7 @@ BAHHHD-Extract, and ZIP layout steps in [PUBLISHING.md](PUBLISHING.md#vertex-pro
 
 
 For v126 race performance comparisons, prepare `game/ATV.zip` and the
-three-shape capture fixture as described in [PUBLISHING.md](PUBLISHING.md).
+three-shape fixture from a normal v126 stderr log as described in [PUBLISHING.md](PUBLISHING.md).
 The launcher generates missing native vertex variants and literal material
 programs from those local inputs before building. A clean checkout can build
 and play using generic fallbacks, but the original v126 performance run used

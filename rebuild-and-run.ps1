@@ -21,17 +21,33 @@ $diagnosticBuildDir = Join-Path $PWD "build-diagnostic-v126"
 $nativeHeader = "third_party/xboxrecomp/src/kernel/nv2a_vsh_compiled.h"
 $literalHeader = "third_party/xboxrecomp/src/kernel/nv2a_gpu_literal_programs.h"
 $literalBody = "third_party/xboxrecomp/src/kernel/nv2a_gpu_literal.inc"
+# Windows tools may rewrite LF as CRLF. Compare the actual shader text after
+# normalizing line endings so a valid local file is not regenerated needlessly.
+function Get-Qpr2ShaderTextHash([string]$shaderPath) {
+    $shaderText = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $shaderPath).Path)
+    $shaderBytes = [System.Text.Encoding]::UTF8.GetBytes($shaderText.Replace("`r`n", "`n"))
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($hasher.ComputeHash($shaderBytes))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $hasher.Dispose()
+    }
+}
 if ((Test-Path ".\\game\\ATV.zip" -PathType Leaf) -and
     -not (Test-Path $nativeHeader -PathType Leaf)) {
     Write-Host "[SHADER-BUILD] Compiling native vertex variants from game/ATV.zip"
     & py -3 tools/compile_qpr2_vertex_programs.py ".\\game\\ATV.zip"
     if ($LASTEXITCODE -ne 0) { throw "Native vertex generation failed: $LASTEXITCODE" }
 }
+# Regenerate only when a file is missing or the tracked body is still the
+# tiny placeholder. A different hash may be a valid custom build, and should
+# be diagnosed rather than overwritten through a Python subprocess.
+$literalHeaderMissing = -not (Test-Path $literalHeader -PathType Leaf)
+$literalBodyMissing = -not (Test-Path $literalBody -PathType Leaf)
+$literalBodyPlaceholder = (-not $literalBodyMissing) -and ((Get-Item -LiteralPath $literalBody).Length -lt 256)
 if ((Test-Path "tools/fixtures/qpr2-literal-programs.json" -PathType Leaf) -and
-    ((-not (Test-Path $literalHeader -PathType Leaf)) -or
-     (-not (Test-Path $literalBody -PathType Leaf)) -or
-     ((Get-FileHash -LiteralPath $literalHeader -Algorithm SHA256).Hash.ToLowerInvariant() -ne "169bc9b0d0d421273d8705d924ce486afa310cba0edee5868d532bd1ef87e178") -or
-     ((Get-FileHash -LiteralPath $literalBody -Algorithm SHA256).Hash.ToLowerInvariant() -ne "e15bc49d65080a033479c3d065400543fa7e3970f0eb7942353abfd051e71f7c"))) {
+    ($literalHeaderMissing -or $literalBodyMissing -or $literalBodyPlaceholder)) {
+    Write-Host "[SHADER-BUILD] classifier missing=$literalHeaderMissing body missing=$literalBodyMissing body placeholder=$literalBodyPlaceholder"
     Write-Host "[SHADER-BUILD] Generating literal material programs from local capture fixture"
     $generationOut = Join-Path $runLogDir "shader-generation.stdout.log"
     $generationErr = Join-Path $runLogDir "shader-generation.stderr.log"
@@ -43,9 +59,9 @@ if ((Test-Path "tools/fixtures/qpr2-literal-programs.json" -PathType Leaf) -and
     $generation.ExitCode | Set-Content (Join-Path $runLogDir "shader-generation.exitcode.txt")
     if ($generation.ExitCode -ne 0) {
         $classifierReady = (Test-Path $literalHeader -PathType Leaf) -and
-            ((Get-FileHash -LiteralPath $literalHeader -Algorithm SHA256).Hash.ToLowerInvariant() -eq "169bc9b0d0d421273d8705d924ce486afa310cba0edee5868d532bd1ef87e178")
+            ((Get-Qpr2ShaderTextHash $literalHeader) -eq "169bc9b0d0d421273d8705d924ce486afa310cba0edee5868d532bd1ef87e178")
         $bodyReady = (Test-Path $literalBody -PathType Leaf) -and
-            ((Get-FileHash -LiteralPath $literalBody -Algorithm SHA256).Hash.ToLowerInvariant() -eq "e15bc49d65080a033479c3d065400543fa7e3970f0eb7942353abfd051e71f7c")
+            ((Get-Qpr2ShaderTextHash $literalBody) -eq "e15bc49d65080a033479c3d065400543fa7e3970f0eb7942353abfd051e71f7c")
         if ($classifierReady -and $bodyReady) {
             Write-Warning "Python exited with $($generation.ExitCode), but both generated files match the v126 hashes; continuing."
         } else {
@@ -68,8 +84,11 @@ foreach ($spec in $shaderSpecs) {
     $state = "missing"
     if (Test-Path -LiteralPath $file -PathType Leaf) {
         $actual = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+        $normalized = Get-Qpr2ShaderTextHash $file
+        $size = (Get-Item -LiteralPath $file).Length
         if ($actual -eq $spec.Hash) { $state = "ready" }
-        else { $state = "different hash (may be a different generator or build)" }
+        elseif ($normalized -eq $spec.Hash) { $state = "ready (line endings normalized)" }
+        else { $state = "different hash; path=$file bytes=$size sha256=$actual normalized_sha256=$normalized" }
     }
     $shaderStatus += "$($spec.Name): $state"
 }

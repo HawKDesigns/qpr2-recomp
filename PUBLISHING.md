@@ -55,29 +55,29 @@ It matches complete shader instruction words and uses live constants. Once
 `game/ATV.zip` exists, the current launcher can also generate this file before
 building.
 
-## Literal combiner programs from a GPU capture
+## Literal combiner programs from a normal run log
 
-The second generator **does exist**: `tools/generate_qpr2_literal_materials.py`.
-It requires `tools/fixtures/qpr2-literal-programs.json`, captured from the
-running game. That JSON contains complete instruction-word arrays, unlike
-the public hashes and numeric identifiers. Keep the JSON and its generated
-program bodies local.
+`tools/generate_qpr2_literal_materials.py` requires the local
+`tools/fixtures/qpr2-literal-programs.json`. The fixture contains complete
+instruction-word arrays, unlike the public hashes and numeric identifiers.
+Keep the JSON and generated shader files local.
 
-1. Run the QPR2 build with your own game files. `rebuild-and-run.ps1` sets
-   `RECOMP_GPU_CAPTURE` to a local path in the run's `logs/` directory.
-   Press **F8** in a 3D menu, preview, and race to capture GPU states. A capture
-   closes after two frames. Copy/rename each completed `.bin` capture before
-   pressing F8 again; the next request overwrites the configured path.
-2. From the QPR2 repo root, pass all saved captures to the extractor. Add
-   further captures if it says any of the three exact shapes or the three
-   variants of class 2 are missing:
+1. Run your own game through a 3D menu, preview, and race. The normal v126
+   stderr log records each distinct `[GPU-MATERIAL-PROGRAM]` state. You do
+   **not** need to time F8 snapshots. The launcher saves each run under its
+   own `logs/v126-run-*/` folder.
+2. From the QPR2 repo root, extract the exact shapes from that run's log:
 
    ```powershell
-   py -3 tools/extract_qpr2_literal_programs.py `
-     "logs\menu-capture.bin" "logs\preview-capture.bin" "logs\race-capture.bin"
+   $log = Get-ChildItem .\logs\v126-run-*\one-hundred-twenty-sixth-run.stderr.log |
+     Sort-Object LastWriteTime -Descending | Select-Object -First 1
+   py -3 tools/extract_qpr2_literal_programs.py $log.FullName
    ```
 
-3. Generate the two local files from the exact-shape fixture:
+   If the newest log lacks any required state, pass additional completed
+   menu/preview/race stderr logs to the same command. The extractor also
+   accepts saved F8 `.bin` captures as optional inputs.
+3. Generate **both** local files from the fixture:
 
    ```powershell
    py -3 tools/generate_qpr2_literal_materials.py
@@ -89,12 +89,15 @@ program bodies local.
    material bodies). The build then regenerates the ignored
    `nv2a_gpu_shader.h` from local HLSL and include sources. Once the exact-shape
    JSON fixture exists, the current launcher can generate these two files
-   before building.
+   before building. Verify that **both** files exist and the `.inc` is
+   generated rather than the 94-byte placeholder; their expected hashes
+   appear below.
 
 The extractor checks SHA-256 fingerprints of the three v126 instruction shapes
-and their final variants. It fails on incomplete or different captures rather
-than silently selecting a different program. More than one capture is usually
-needed; a single F8 request is only two frames. Exact v126 output SHA-256s:
+and their final variants. It fails on incomplete or different logs/captures
+rather than silently selecting a different program. A normal run log from
+menu through race contained all three classes and all three class-2 variants
+in the v126 test. Exact v126 output SHA-256s:
 
 | Generated file | SHA-256 |
 | --- | --- |
@@ -104,7 +107,7 @@ needed; a single F8 request is only two frames. Exact v126 output SHA-256s:
 
 The vertex hash assumes the same extracted archive and generator version.
 The literal hashes assume the same v126 shapes and generator version.
-Captured `.bin` files contain more than combiner words; keep them private.
+Run logs and optional captured `.bin` files contain game-derived state; keep them private.
 
 If you already have the three files in your local v126 checkout, copy them
 into the same paths in a separate v0.16 trial clone. Do not copy the old
