@@ -68,6 +68,10 @@ The pipeline examines all code-bearing XBE sections, not only `.text`. Do not
 commit or share `game/`, generated translations, saves, memory dumps, or other
 retail-derived artifacts.
 
+To make `game/ATV.zip` for the native vertex shaders, follow the ISO extraction,
+BAHHHD-Extract, and ZIP layout steps in [PUBLISHING.md](PUBLISHING.md#vertex-programs-from-your-extracted-archive). Keep the extracted folder and ZIP under
+`game/` so they remain ignored by Git.
+
 
 For v126 race performance comparisons, generate the local shader programs in
 [PUBLISHING.md](PUBLISHING.md) **before** running the launcher. A clean checkout

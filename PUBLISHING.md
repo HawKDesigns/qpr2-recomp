@@ -8,13 +8,47 @@ local checkout.
 
 ## Vertex programs from your extracted archive
 
-Extract the game's BAD/BAH resources from your own copy until you have the
-original `ATV.zip` with `VertexShader/Assembled/VS*` entries. From the QPR2
-repo root, run:
+The `ATV.zip` used here is **made locally from the contents of an
+extracted ATV folder**. It is not a ZIP found directly on the disc.
 
-```powershell
-py -3 tools/compile_qpr2_vertex_programs.py "path\to\ATV.zip"
-```
+1. Extract your own original Xbox game ISO into this repo's `game/` folder
+   with an Xbox ISO extraction utility. Find the matching `ATV.BAD` and
+   `ATV.BAH` files in those extracted game files. The commands below assume
+   `game/ATV.BAD` and `game/ATV.BAH`; adjust the paths if your ISO extractor
+   placed them elsewhere.
+2. Clone [BAHHHD-Extract](https://github.com/HawKDesigns/BAHHHD-Extract)
+   beside this QPR2 repository. From the **QPR2 repository root**, list and
+   then extract the pair into `game/ATV/`:
+
+   ```powershell
+   git clone https://github.com/HawKDesigns/BAHHHD-Extract.git ..\BAHHHD-Extract
+   py -3 ..\BAHHHD-Extract\bad_extract.py ".\game\ATV.BAD" --bah ".\game\ATV.BAH" --list
+   py -3 ..\BAHHHD-Extract\bad_extract.py ".\game\ATV.BAD" --bah ".\game\ATV.BAH" -o ".\game\ATV"
+   ```
+
+   If you already cloned the tool, skip the clone command. Resolve any
+   reported extraction failures before making the ZIP.
+3. **Go into `game/ATV/` and ZIP its contents**, naming the result
+   `game/ATV.zip`:
+
+   ```powershell
+   Push-Location .\game\ATV
+   Compress-Archive -Path .\* -DestinationPath ..\ATV.zip -Force
+   Pop-Location
+   ```
+
+   The ZIP root must contain `VertexShader/Assembled/VS*` entries, **without**
+   an outer `ATV/` directory. Check its layout:
+
+   ```powershell
+   py -3 -c "import zipfile; names=zipfile.ZipFile('game/ATV.zip').namelist(); assert any(n.startswith('VertexShader/Assembled/VS') for n in names), 'Shader entries are not at the ZIP root'; print('ATV.zip layout OK')"
+   ```
+
+4. From the QPR2 repository root, compile the local vertex programs:
+
+   ```powershell
+   py -3 tools/compile_qpr2_vertex_programs.py ".\game\ATV.zip"
+   ```
 
 This writes `third_party/xboxrecomp/src/kernel/nv2a_vsh_compiled.h`.
 It matches complete shader instruction words and uses live constants.
