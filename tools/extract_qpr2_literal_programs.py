@@ -35,7 +35,7 @@ def digest(words):
     return hashlib.sha256(struct.pack("<%dI" % len(words), *words)).hexdigest()
 
 
-def log_states(path):
+def log_states(path, require_records=True):
     """Read per-program combiner snapshots emitted by the normal v126 run."""
     keys = ("id", "control", "stages", "final0", "final1", *FIELDS)
     seen = 0
@@ -62,13 +62,13 @@ def log_states(path):
             except (ValueError, KeyError) as exc:
                 raise ValueError(f"{path}:{line_number}: invalid material program: {exc}") from exc
             yield words
-    if not seen:
+    if not seen and require_records:
         raise ValueError(f"{path}: no GPU-MATERIAL-PROGRAM records; use the v126 stderr log after a 3D scene")
 
 
-def states(path):
+def states(path, require_records=True):
     if path.suffix.lower() != ".bin":
-        yield from log_states(path)
+        yield from log_states(path, require_records=require_records)
         return
     with path.open("rb") as stream:
         header = stream.read(16)
@@ -97,10 +97,10 @@ def states(path):
                 yield struct.unpack_from("<54I", payload, 12 + i * state_size)
 
 
-def extract(paths):
+def extract(paths, ignore_empty_logs=False):
     found = {}
     for path in paths:
-        for words in states(path):
+        for words in states(path, require_records=not ignore_empty_logs):
             control, stage_program = words[52:54]
             n = control & 255
             if not 0 < n <= 8:
@@ -140,7 +140,7 @@ def main():
                         help="report missing states briefly when learning from ordinary runs")
     args = parser.parse_args()
     try:
-        programs = extract(args.captures)
+        programs = extract(args.captures, ignore_empty_logs=args.quiet_incomplete)
     except ValueError as exc:
         if not args.quiet_incomplete:
             raise
