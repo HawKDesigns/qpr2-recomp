@@ -33,8 +33,25 @@ if ((Test-Path "tools/fixtures/qpr2-literal-programs.json" -PathType Leaf) -and
      ((Get-FileHash -LiteralPath $literalHeader -Algorithm SHA256).Hash.ToLowerInvariant() -ne "169bc9b0d0d421273d8705d924ce486afa310cba0edee5868d532bd1ef87e178") -or
      ((Get-FileHash -LiteralPath $literalBody -Algorithm SHA256).Hash.ToLowerInvariant() -ne "e15bc49d65080a033479c3d065400543fa7e3970f0eb7942353abfd051e71f7c"))) {
     Write-Host "[SHADER-BUILD] Generating literal material programs from local capture fixture"
-    & py -3 tools/generate_qpr2_literal_materials.py
-    if ($LASTEXITCODE -ne 0) { throw "Literal material generation failed: $LASTEXITCODE" }
+    $generationOut = Join-Path $runLogDir "shader-generation.stdout.log"
+    $generationErr = Join-Path $runLogDir "shader-generation.stderr.log"
+    # Capture output even if Windows terminates Python before it can print a traceback.
+    $pythonLauncher = (Get-Command py -ErrorAction Stop).Source
+    $generation = Start-Process -FilePath $pythonLauncher -ArgumentList @("-3", "-u", "tools/generate_qpr2_literal_materials.py") -WorkingDirectory $PWD.Path -Wait -PassThru -RedirectStandardOutput $generationOut -RedirectStandardError $generationErr
+    if (Test-Path $generationOut) { Get-Content $generationOut | ForEach-Object { Write-Host $_ } }
+    if (Test-Path $generationErr) { Get-Content $generationErr | ForEach-Object { Write-Warning $_ } }
+    $generation.ExitCode | Set-Content (Join-Path $runLogDir "shader-generation.exitcode.txt")
+    if ($generation.ExitCode -ne 0) {
+        $classifierReady = (Test-Path $literalHeader -PathType Leaf) -and
+            ((Get-FileHash -LiteralPath $literalHeader -Algorithm SHA256).Hash.ToLowerInvariant() -eq "169bc9b0d0d421273d8705d924ce486afa310cba0edee5868d532bd1ef87e178")
+        $bodyReady = (Test-Path $literalBody -PathType Leaf) -and
+            ((Get-FileHash -LiteralPath $literalBody -Algorithm SHA256).Hash.ToLowerInvariant() -eq "e15bc49d65080a033479c3d065400543fa7e3970f0eb7942353abfd051e71f7c")
+        if ($classifierReady -and $bodyReady) {
+            Write-Warning "Python exited with $($generation.ExitCode), but both generated files match the v126 hashes; continuing."
+        } else {
+            throw "Literal material generation exited $($generation.ExitCode). See $generationOut and $generationErr. The existing verified local shader package can also supply these two files."
+        }
+    }
 }
 
 # A clean checkout still runs with generic shader fallbacks, but its race FPS
@@ -369,7 +386,7 @@ Write-Host "Kept this run in $runLogDir (earlier attempts remain in their own fo
 if (Test-Path ".\xbox_kernel.log") {
     Copy-Item -Force ".\xbox_kernel.log" "$runLogDir\one-hundred-twenty-sixth-kernel.log"
 }
-$results = @(Get-ChildItem "$runLogDir\diagnostic-v126-*", "$runLogDir\one-hundred-twenty-sixth-*", "$runLogDir\shader-status.txt" -File)
+$results = @(Get-ChildItem "$runLogDir\diagnostic-v126-*", "$runLogDir\one-hundred-twenty-sixth-*", "$runLogDir\shader-status.txt", "$runLogDir\shader-generation.*" -File)
 if ($results.Count -gt 0) {
     Compress-Archive -LiteralPath $results.FullName -DestinationPath ".\logs\qpr2-v126-results.zip" -Force
     Write-Host "Results archived: $PWD\logs\qpr2-v126-results.zip"

@@ -80,7 +80,8 @@ programs from those local inputs before building. A clean checkout can build
 and play using generic fallbacks, but the original v126 performance run used
 180 native vertex variants and all three literal material classes. Check the
 three `[SHADER-STATUS]` lines for `ready`; `shader-status.txt` is included in
-the results ZIP. The generated files stay local.
+the results ZIP. If Python exits during generation, the launcher keeps separate
+`shader-generation.*` logs in that run directory. The generated files stay local.
 
 ## Run the current diagnostic build
 

@@ -6,7 +6,9 @@ Regenerate explicitly after changing the evaluator; Windows build needs no Pytho
 from pathlib import Path
 import json,re
 root=Path(__file__).resolve().parents[1];k=root/'third_party/xboxrecomp/src/kernel'
+print('[LITERAL-GEN] reading local shape fixture', flush=True)
 programs=json.loads((root/'tools/fixtures/qpr2-literal-programs.json').read_text())
+print('[LITERAL-GEN] reading pixel evaluator', flush=True)
 s=(k/'nv2a_gpu_pixel.inc').read_text();s=s[s.index('    GPU_REG_VARIABLE(R);',s.index('GPU_FN void gpu_rc_eval(')):]
 a=s.index('    for (s = 0; s < n; s++) {');b=s.index('\n    if (rc.final0 || rc.final1) {',a)
 prefix=s[:a];stage=s[a+len('    for (s = 0; s < n; s++) {'):b];assert stage.endswith('\n    }\n');stage=stage[:-len('\n    }\n')]
@@ -60,5 +62,9 @@ for p in programs:
 header+='    default:break;\n    }\n}\n#endif\n';out+='#endif\n'
 for name,content in [('nv2a_gpu_literal.inc',out),('nv2a_gpu_literal_programs.h',header)]:
  target=k/name
- if not target.exists() or target.read_text()!=content:target.write_text(content)
+ print(f'[LITERAL-GEN] checking {name}', flush=True)
+ if not target.exists() or target.read_text()!=content:
+  print(f'[LITERAL-GEN] writing {name}', flush=True)
+  target.write_text(content)
+ print(f'[LITERAL-GEN] ready {name}', flush=True)
 print('Generated 3 exact material bodies and CPU classifier')
