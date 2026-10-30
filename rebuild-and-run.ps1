@@ -15,17 +15,39 @@ New-Item -ItemType Directory -Force $runLogDir | Out-Null
 $diagnosticBuildDir = Join-Path $PWD "build-diagnostic-v126"
 
 
-# Rebuild locally derived specializations before compiling. Extraction creates
-# the material fixture; it does not install shader code by itself. Both inputs
-# remain under ignored paths and never enter the public repository.
+# Rebuild locally derived specializations before compiling. The first ordinary
+# menu/preview/race run teaches the launcher the reviewed material states; no
+# F8 capture or manual extractor command is required.
 $nativeHeader = "third_party/xboxrecomp/src/kernel/nv2a_vsh_compiled.h"
 $literalHeader = "third_party/xboxrecomp/src/kernel/nv2a_gpu_literal_programs.h"
 $literalBody = "third_party/xboxrecomp/src/kernel/nv2a_gpu_literal.inc"
+$materialFixture = "tools/fixtures/qpr2-literal-programs.json"
+
+function Update-Qpr2MaterialFixture {
+    if (Test-Path -LiteralPath $materialFixture -PathType Leaf) { return }
+    $runLogs = @(Get-ChildItem -Path ".\logs\v126-run-*\one-hundred-twenty-sixth-run.stderr.log" -File -ErrorAction SilentlyContinue |
+        Sort-Object FullName)
+    if ($runLogs.Count -eq 0) { return }
+    $logPaths = @($runLogs | ForEach-Object { $_.FullName })
+    Write-Host "[SHADER-LEARN] Checking $($runLogs.Count) local run log(s) for reviewed material states..."
+    & py -3 tools/extract_qpr2_literal_programs.py --quiet-incomplete @logPaths | Out-Host
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "[SHADER-LEARN] Material fixture ready; the next build generates fast literal shaders."
+    } else {
+        Write-Host "[SHADER-LEARN] Still collecting material states. Play through a 3D menu, preview, and race normally."
+    }
+}
+# Recover a fixture from existing runs when upgrading a checkout.
+Update-Qpr2MaterialFixture
 # Windows tools may rewrite LF as CRLF. Compare the actual shader text after
 # normalizing line endings so a valid local file is not regenerated needlessly.
-function Get-Qpr2ShaderTextHash([string]$shaderPath) {
-    $shaderText = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $shaderPath).Path)
-    $shaderBytes = [System.Text.Encoding]::UTF8.GetBytes($shaderText.Replace("`r`n", "`n"))
+function Get-Qpr2ShaderTextHash([string]$shaderPath, [switch]$IgnoreArchiveMetadata) {
+    $shaderText = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $shaderPath).Path).Replace("`r`n", "`n")
+    if ($IgnoreArchiveMetadata) {
+        # ZIP timestamps/compression change the archive hash, not the shaders.
+        $shaderText = [regex]::Replace($shaderText, "Archive SHA256: [0-9a-fA-F]{64}", "Archive SHA256: [archive]")
+    }
+    $shaderBytes = [System.Text.Encoding]::UTF8.GetBytes($shaderText)
     $hasher = [System.Security.Cryptography.SHA256]::Create()
     try {
         return ([System.BitConverter]::ToString($hasher.ComputeHash($shaderBytes))).Replace("-", "").ToLowerInvariant()
@@ -39,33 +61,30 @@ if ((Test-Path ".\\game\\ATV.zip" -PathType Leaf) -and
     & py -3 tools/compile_qpr2_vertex_programs.py ".\\game\\ATV.zip"
     if ($LASTEXITCODE -ne 0) { throw "Native vertex generation failed: $LASTEXITCODE" }
 }
-# Regenerate only when a file is missing or the tracked body is still the
-# tiny placeholder. A different hash may be a valid custom build, and should
-# be diagnosed rather than overwritten through a Python subprocess.
+# Generate the reviewed materials when absent. Preserve existing local variants
+# for diagnosis instead of silently replacing a user's custom files.
 $literalHeaderMissing = -not (Test-Path $literalHeader -PathType Leaf)
 $literalBodyMissing = -not (Test-Path $literalBody -PathType Leaf)
 $literalBodyPlaceholder = (-not $literalBodyMissing) -and ((Get-Item -LiteralPath $literalBody).Length -lt 256)
-if ((Test-Path "tools/fixtures/qpr2-literal-programs.json" -PathType Leaf) -and
+if ((Test-Path $materialFixture -PathType Leaf) -and
     ($literalHeaderMissing -or $literalBodyMissing -or $literalBodyPlaceholder)) {
     Write-Host "[SHADER-BUILD] classifier missing=$literalHeaderMissing body missing=$literalBodyMissing body placeholder=$literalBodyPlaceholder"
-    Write-Host "[SHADER-BUILD] Generating literal material programs from local capture fixture"
+    Write-Host "[SHADER-BUILD] Generating literal material programs from locally learned fixture"
     $generationOut = Join-Path $runLogDir "shader-generation.stdout.log"
-    $generationErr = Join-Path $runLogDir "shader-generation.stderr.log"
-    # Capture output even if Windows terminates Python before it can print a traceback.
-    $pythonLauncher = (Get-Command py -ErrorAction Stop).Source
-    $generation = Start-Process -FilePath $pythonLauncher -ArgumentList @("-3", "-u", "tools/generate_qpr2_literal_materials.py") -WorkingDirectory $PWD.Path -Wait -PassThru -RedirectStandardOutput $generationOut -RedirectStandardError $generationErr
-    if (Test-Path $generationOut) { Get-Content $generationOut | ForEach-Object { Write-Host $_ } }
-    if (Test-Path $generationErr) { Get-Content $generationErr | ForEach-Object { Write-Warning $_ } }
-    $generation.ExitCode | Set-Content (Join-Path $runLogDir "shader-generation.exitcode.txt")
-    if ($generation.ExitCode -ne 0) {
+    # Use the same Python invocation as the working vertex generator. A
+    # separate Start-Process launch failed before executing Python on one host.
+    & py -3 -u tools/generate_qpr2_literal_materials.py | Tee-Object -FilePath $generationOut | Out-Host
+    $generationExit = $LASTEXITCODE
+    $generationExit | Set-Content (Join-Path $runLogDir "shader-generation.exitcode.txt")
+    if ($generationExit -ne 0) {
         $classifierReady = (Test-Path $literalHeader -PathType Leaf) -and
             ((Get-Qpr2ShaderTextHash $literalHeader) -eq "169bc9b0d0d421273d8705d924ce486afa310cba0edee5868d532bd1ef87e178")
         $bodyReady = (Test-Path $literalBody -PathType Leaf) -and
             ((Get-Qpr2ShaderTextHash $literalBody) -eq "e15bc49d65080a033479c3d065400543fa7e3970f0eb7942353abfd051e71f7c")
         if ($classifierReady -and $bodyReady) {
-            Write-Warning "Python exited with $($generation.ExitCode), but both generated files match the v126 hashes; continuing."
+            Write-Warning "Python exited with $generationExit, but both generated files match the v126 hashes; continuing."
         } else {
-            throw "Literal material generation exited $($generation.ExitCode). See $generationOut and $generationErr. The existing verified local shader package can also supply these two files."
+            throw "Literal material generation exited $generationExit. See $generationOut and verify Python, your local fixture and the pinned submodule."
         }
     }
 }
@@ -88,6 +107,10 @@ foreach ($spec in $shaderSpecs) {
         $size = (Get-Item -LiteralPath $file).Length
         if ($actual -eq $spec.Hash) { $state = "ready" }
         elseif ($normalized -eq $spec.Hash) { $state = "ready (line endings normalized)" }
+        elseif ($spec.Name -eq "native vertex" -and
+                (Get-Qpr2ShaderTextHash $file -IgnoreArchiveMetadata) -eq "ac56f05ac9b1b7f3b0d65b39d331af7dd435542e26b30bf11016b0433eb20042") {
+            $state = "ready (equivalent vertex programs; ZIP metadata differs)"
+        }
         else { $state = "different hash; path=$file bytes=$size sha256=$actual normalized_sha256=$normalized" }
     }
     $shaderStatus += "$($spec.Name): $state"
@@ -96,9 +119,12 @@ $shaderStatus | Set-Content (Join-Path $runLogDir "shader-status.txt")
 $shaderStatus | ForEach-Object { Write-Host "[SHADER-STATUS] $_" }
 if ($shaderStatus -match "missing|different hash") {
     Write-Warning "Local v126 shader programs are incomplete; generic fallbacks can substantially lower race FPS."
-    Write-Host "See PUBLISHING.md: compile_qpr2_vertex_programs.py with your ATV.zip,"
-    Write-Host "then extract_qpr2_literal_programs.py from a normal stderr run log and run"
-    Write-Host "generate_qpr2_literal_materials.py before comparing performance."
+    if (-not (Test-Path ".\game\ATV.zip" -PathType Leaf)) {
+        Write-Host "Create game/ATV.zip from your own extracted ATV.BAD/BAH (see PUBLISHING.md)."
+    }
+    if (-not (Test-Path -LiteralPath $materialFixture -PathType Leaf)) {
+        Write-Host "Play one ordinary run through a 3D menu, preview, and race. The launcher learns the material states on exit; the next launch uses them."
+    }
 }
 
 # V53 builds the supplied generation and bounded recovered callbacks.
@@ -418,6 +444,10 @@ $process.ExitCode | Set-Content "$runLogDir\one-hundred-twenty-sixth-run.exitcod
 Write-Host "Run finished with exit code $($process.ExitCode)."
 Write-Host "Kept this run in $runLogDir (earlier attempts remain in their own folders)."
 
+# The normal stderr records distinct combiner states once per program. Learn
+# from all ordinary runs and install the fixture for the next build, without
+# requiring timed F8 snapshots or a manual extraction command.
+Update-Qpr2MaterialFixture
 
 if (Test-Path ".\xbox_kernel.log") {
     Copy-Item -Force ".\xbox_kernel.log" "$runLogDir\one-hundred-twenty-sixth-kernel.log"
