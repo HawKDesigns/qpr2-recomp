@@ -14,6 +14,97 @@ New-Item -ItemType Directory -Force $runLogDir | Out-Null
 # timestamps to invalidate previously compiled MSBuild objects.
 $diagnosticBuildDir = Join-Path $PWD "build-diagnostic-v126"
 
+# Windows' py launcher can terminate with 0xC0000022 before a Python script
+# starts. Resolve the interpreter and run python.exe directly when possible.
+$script:Qpr2PythonChoice = $null
+function Get-Qpr2PythonChoices {
+    $choices = @()
+    $pyCommand = Get-Command py.exe -ErrorAction SilentlyContinue
+    if ($pyCommand) {
+        try {
+            $reported = & ($pyCommand.Source) -3 -c "import sys; print(sys.executable)" 2>$null
+            if ($LASTEXITCODE -eq 0 -and $reported) {
+                $path = [string]($reported | Select-Object -Last 1)
+                if (Test-Path -LiteralPath $path -PathType Leaf) {
+                    $choices += @{ Name = "py-selected python.exe"; Path = $path; Prefix = @() }
+                }
+            }
+        } catch {
+            Write-Host "[PYTHON] py -3 interpreter discovery failed: $($_.Exception.Message)"
+        }
+    }
+    foreach ($name in @("python.exe", "python3.exe")) {
+        foreach ($command in @(Get-Command $name -All -ErrorAction SilentlyContinue)) {
+            if ($command -and $command.Source) {
+                $choices += @{ Name = $name; Path = $command.Source; Prefix = @() }
+            }
+        }
+    }
+    if ($env:LOCALAPPDATA) {
+        $pythonRoot = Join-Path $env:LOCALAPPDATA "Programs\Python"
+        foreach ($file in @(Get-ChildItem -Path $pythonRoot -Filter python.exe -Recurse -File -ErrorAction SilentlyContinue)) {
+            $choices += @{ Name = "installed python.exe"; Path = $file.FullName; Prefix = @() }
+        }
+    }
+    if ($pyCommand) {
+        $choices += @{ Name = "py -3"; Path = $pyCommand.Source; Prefix = @("-3") }
+    }
+    $seen = @{}
+    foreach ($choice in $choices) {
+        $key = ($choice.Path + " " + ($choice.Prefix -join " ")).ToLowerInvariant()
+        if (-not $seen.ContainsKey($key)) {
+            $seen[$key] = $true
+            $choice
+        }
+    }
+}
+function Invoke-Qpr2Python {
+    param([string[]]$Arguments, [string]$LogFile)
+    $choices = if ($script:Qpr2PythonChoice) { @($script:Qpr2PythonChoice) } else { @(Get-Qpr2PythonChoices) }
+    if ($choices.Count -eq 0) { throw "Python 3.10+ was not found. Check your Python installation and PATH." }
+    $lastFailure = 0
+    foreach ($choice in $choices) {
+        $commandArgs = @($choice.Prefix) + $Arguments
+        Write-Host "[PYTHON] $($choice.Name): $($choice.Path) $($Arguments[0])"
+        try {
+            $probeArgs = @($choice.Prefix) + @("-c", "import sys, zipfile, mmap; sys.exit(0 if sys.version_info >= (3, 10) else 3)")
+            & ($choice.Path) @probeArgs 2>$null | Out-Null
+            $probeExit = $LASTEXITCODE
+        } catch {
+            $probeExit = -1073741790
+        }
+        if ($probeExit -ne 0) {
+            Write-Host "[PYTHON] Interpreter probe failed ($probeExit); trying the next installation."
+            $lastFailure = $probeExit
+            continue
+        }
+        $savedErrorAction = $ErrorActionPreference
+        try {
+            # Native stderr should remain visible, not become a terminating
+            # PowerShell NativeCommandError before we inspect the exit code.
+            $ErrorActionPreference = "Continue"
+            if ($LogFile) {
+                & ($choice.Path) @commandArgs | Tee-Object -FilePath $LogFile | Out-Host
+            } else {
+                & ($choice.Path) @commandArgs | Out-Host
+            }
+            $lastFailure = $LASTEXITCODE
+        } catch {
+            Write-Host "[PYTHON] Launch failed: $($_.Exception.Message)"
+            $lastFailure = -1073741790
+        } finally {
+            $ErrorActionPreference = $savedErrorAction
+        }
+        if ($lastFailure -eq 0) {
+            $script:Qpr2PythonChoice = $choice
+            return 0
+        }
+        # Do not retry semantic Python errors with another interpreter.
+        if ($lastFailure -ne -1073741790) { return $lastFailure }
+        Write-Host "[PYTHON] Interpreter terminated with 0xC0000022 before completing; trying the next installation."
+    }
+    return $lastFailure
+}
 
 # Rebuild locally derived specializations before compiling. The first ordinary
 # menu/preview/race run teaches the launcher the reviewed material states; no
@@ -30,8 +121,8 @@ function Update-Qpr2MaterialFixture {
     if ($runLogs.Count -eq 0) { return }
     $logPaths = @($runLogs | ForEach-Object { $_.FullName })
     Write-Host "[SHADER-LEARN] Checking $($runLogs.Count) local run log(s) for reviewed material states..."
-    & py -3 tools/extract_qpr2_literal_programs.py --quiet-incomplete @logPaths | Out-Host
-    if ($LASTEXITCODE -eq 0) {
+    $learnExit = Invoke-Qpr2Python -Arguments (@("tools/extract_qpr2_literal_programs.py", "--quiet-incomplete") + $logPaths)
+    if ($learnExit -eq 0) {
         Write-Host "[SHADER-LEARN] Material fixture ready; the next build generates fast literal shaders."
     } else {
         Write-Host "[SHADER-LEARN] Still collecting material states. Play through a 3D menu, preview, and race normally."
@@ -60,13 +151,16 @@ if (-not (Test-Path $nativeHeader -PathType Leaf)) {
     # expands all files into game/ATV/, then a deterministic ZIP places their
     # contents (not an outer ATV folder) at the archive root.
     Write-Host "[ATV-PREP] Preparing game/ATV.zip from the local archive or extracted folder"
-    & py -3 tools/prepare_qpr2_atv_archive.py
-    if ($LASTEXITCODE -ne 0) {
-        throw "ATV archive preparation failed: $LASTEXITCODE. Place your own ATV.BAD/ATV.BAH under game/ or provide a complete game/ATV/ folder."
+    $prepExit = Invoke-Qpr2Python -Arguments @("tools/prepare_qpr2_atv_archive.py")
+    if ($prepExit -ne 0) {
+        if ($prepExit -eq -1073741790) {
+            throw "Python stopped with Windows 0xC0000022 before ATV archive preparation could inspect the game files. See the [PYTHON] interpreter attempts above; check Python execution permissions."
+        }
+        throw "ATV archive preparation exited $prepExit. Check the [ATV-PREP] error above and your local ATV.BAD/ATV.BAH or game/ATV/ folder."
     }
     Write-Host "[SHADER-BUILD] Compiling native vertex variants from game/ATV.zip"
-    & py -3 tools/compile_qpr2_vertex_programs.py ".\\game\\ATV.zip"
-    if ($LASTEXITCODE -ne 0) { throw "Native vertex generation failed: $LASTEXITCODE" }
+    $nativeExit = Invoke-Qpr2Python -Arguments @("tools/compile_qpr2_vertex_programs.py", ".\\game\\ATV.zip")
+    if ($nativeExit -ne 0) { throw "Native vertex generation failed: $nativeExit" }
 }
 # Generate the reviewed materials when absent. Preserve existing local variants
 # for diagnosis instead of silently replacing a user's custom files.
@@ -78,10 +172,7 @@ if ((Test-Path $materialFixture -PathType Leaf) -and
     Write-Host "[SHADER-BUILD] classifier missing=$literalHeaderMissing body missing=$literalBodyMissing body placeholder=$literalBodyPlaceholder"
     Write-Host "[SHADER-BUILD] Generating literal material programs from locally learned fixture"
     $generationOut = Join-Path $runLogDir "shader-generation.stdout.log"
-    # Use the same Python invocation as the working vertex generator. A
-    # separate Start-Process launch failed before executing Python on one host.
-    & py -3 -u tools/generate_qpr2_literal_materials.py | Tee-Object -FilePath $generationOut | Out-Host
-    $generationExit = $LASTEXITCODE
+    $generationExit = Invoke-Qpr2Python -Arguments @("-u", "tools/generate_qpr2_literal_materials.py") -LogFile $generationOut
     $generationExit | Set-Content (Join-Path $runLogDir "shader-generation.exitcode.txt")
     if ($generationExit -ne 0) {
         $classifierReady = (Test-Path $literalHeader -PathType Leaf) -and
