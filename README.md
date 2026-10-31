@@ -81,13 +81,18 @@ The pipeline examines all code-bearing XBE sections, not only `.text`. Do not
 commit or share `game/`, generated translations, saves, memory dumps, or other
 retail-derived artifacts.
 
-To make `game/ATV.zip` for the native vertex shaders, follow the ISO extraction,
-BAHHHD-Extract, and ZIP layout steps in [PUBLISHING.md](PUBLISHING.md#vertex-programs-from-your-extracted-archive). Keep the extracted folder and ZIP under
-`game/` so they remain ignored by Git.
+Keep the `ATV.BAD` and `ATV.BAH` from your extracted ISO under
+`game/` (a nested game directory is also supported). When the native vertex
+header is missing, the launcher uses the bundled BAHHHD-Extract tool to
+extract **every** ATV file into `game/ATV/`, creates `game/ATV.zip` with
+those files at the ZIP root, and generates the native vertex variants.
+An existing complete `game/ATV/` folder or `game/ATV.zip` is reused.
+The extractor and ZIP preparation work offline; no separate clone or manual
+PowerShell compression command is needed. See [PUBLISHING.md](PUBLISHING.md#vertex-programs-from-your-extracted-archive)
+for the source layout and checks.
 
-
-For comparable v126 race performance, prepare `game/ATV.zip` from your
-own extracted disc. The launcher generates the 180 native vertex variants
+For comparable v126 race performance, leave those locally extracted game
+files under `game/`. The launcher generates the 180 native vertex variants
 automatically. During the first ordinary playthrough of a 3D menu, preview,
 and race, it learns the reviewed material shapes from its own stderr log.
 Close the game and launch `rebuild-and-run.ps1` again: it generates all three
