@@ -54,6 +54,29 @@ frame-rate improvement. Compare the new default against `RECOMP_GPU_PARTIAL_READ
 build if the Windows run shows a regression. The existing `RECOMP_GPU_NATIVE`
 setting does not need to be changed.
 
+## FIFO dependency lookup experiment (following the dirty-row result)
+
+The next race run showed no FPS improvement from dirty-row staging:
+`[GPU-READBACK-ROWS]` reported about 4–9 MB avoided from roughly
+400–630 MB transferred in typical five-second race windows. Most large
+targets are fully dirty, so that transfer change cannot resolve the
+frame-rate limit.
+
+The FIFO executor reads approximately 6–9 million pushbuffer words per
+five-second race window. Each read checks for overlap with queued GPU
+color/depth targets before the guest can consume their memory. The fork now
+caches the canonical address and exact size of each queued target once and
+reuses those ranges for the per-word dependency check. When no target is
+pending and no active deferred publication exists, it skips the target-memory
+lookup. Missing cached metadata retains the original overlap implementation.
+The check still drains the queued readback on a matching range. The new
+`[GPU-PENDING-ACCESS]` line reports the fast path's use.
+
+A randomized 100,000-case comparison covered direct addresses, tiled
+aliases, zero sizes, and overflowing ranges against the original overlap
+predicate. Windows build and race FPS remain unverified. Set
+`RECOMP_GPU_FAST_PENDING_ACCESS=0` for a same-build comparison.
+
 ## Requested features
 
 | Feature | Status in v126 | Outstanding |
