@@ -154,6 +154,7 @@ def prepare(game: Path) -> Path:
 
 
 def main() -> int:
+    print("[ATV-PREP] Python started; checking the local ATV archive", flush=True)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--game-dir", type=Path, default=Path(__file__).resolve().parents[1] / "game")
     args = parser.parse_args()
