@@ -33,6 +33,26 @@ same build; an inherited `RECOMP_GPU_POINT_V125=0` also disables it.
 
 Stable 30 FPS remains open. Mounted ATV/rider shadows remain unresolved.
 
+## Readback staging experiment (after v126 baseline)
+
+The latest v126 race log confirms that the automatic ATV and shader preparation
+returns to the expected performance range. Race intervals still vary with the
+scene. In several five-second windows, GPU target readback mapping takes about
+0.7–1.5 seconds while the GPU pixel phase is short in sampled batches. The
+mesh cache evicts many entries, but its miss count stays high even in faster
+race intervals; the log does not make a case for simply enlarging that cache.
+
+The pinned XboxRecomp fork now transfers only the dirty target's containing
+row span from GPU surface to CPU staging at current, queued, and deferred
+readbacks. Guest color and depth publication still reads the same dirty
+rectangle, and the complete GPU snapshot used by texture feedback and target
+resume is unchanged. The new `[GPU-READBACK-ROWS]` counter records transfers,
+partial transfers, and bytes saved. A 400-case synthetic dirty rectangle test
+matched full-copy pixel/depth publication. Windows compilation, output checks,
+and the FPS effect need a user race run; this is an experiment, not a measured
+frame-rate improvement. The existing `RECOMP_GPU_NATIVE` setting does not
+need to be changed.
+
 ## Requested features
 
 | Feature | Status in v126 | Outstanding |
