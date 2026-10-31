@@ -77,6 +77,30 @@ aliases, zero sizes, and overflowing ranges against the original overlap
 predicate. Windows build and race FPS remain unverified. Set
 `RECOMP_GPU_FAST_PENDING_ACCESS=0` for a same-build comparison.
 
+## Sampled batch timing pass
+
+The run after the FIFO pending-range cache showed no visible FPS change.
+`[GPU-PENDING-ACCESS]` counts roughly 8–12 million empty checks and around
+100,000 actual range checks in representative five-second windows; that
+lookup was not the main cost. `[RENDER-TIME] batch_ms` remains about
+2.3–2.9 seconds per window, while CPU fallback transform/raster totals
+are often around one second.
+
+The fork now reports 1/64 sampled CPU times for FIFO word reads and
+method execution (`[GPU-FIFO-CPU]`), raw draw setup versus GPU submission
+(`[PB-RAW-CPU]`), and raw geometry reserve, bookkeeping and total
+(`[GPU-GEOMETRY-CPU]`). Each line includes exact call counts and sampled
+time; `decode_residual_est_ms` is a noisy difference estimate. The
+existing `[GPU-FLUSH-CPU]` measures full CPU upload/dispatch timings.
+These nested measurements must not be added together.
+
+GPU pixel timestamps in `[GPU-PASS-TIME]` are also samples. For example,
+22 ms across 42 sampled batches in this run is not 22 ms for the whole
+five-second window: roughly 2,400 total flush batches at that mean would
+represent about 1.3 seconds of GPU pixel work, potentially overlapped
+with CPU submission and waits. This profiling pass changes no rendering
+algorithm and does not claim an FPS gain.
+
 ## Requested features
 
 | Feature | Status in v126 | Outstanding |
