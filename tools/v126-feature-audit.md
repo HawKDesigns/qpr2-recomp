@@ -50,8 +50,9 @@ resume is unchanged. The new `[GPU-READBACK-ROWS]` counter records transfers,
 partial transfers, and bytes saved. A 400-case synthetic dirty rectangle test
 matched full-copy pixel/depth publication. Windows compilation, output checks,
 and the FPS effect need a user race run; this is an experiment, not a measured
-frame-rate improvement. The existing `RECOMP_GPU_NATIVE` setting does not
-need to be changed.
+frame-rate improvement. Compare the new default against `RECOMP_GPU_PARTIAL_READBACK=0` in the same
+build if the Windows run shows a regression. The existing `RECOMP_GPU_NATIVE`
+setting does not need to be changed.
 
 ## Requested features
 
