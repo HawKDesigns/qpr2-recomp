@@ -89,7 +89,11 @@ those files at the ZIP root, and generates the native vertex variants.
 An existing complete `game/ATV/` folder or `game/ATV.zip` is reused.
 The extractor and ZIP preparation work offline; no separate clone or manual
 PowerShell compression command is needed. See [PUBLISHING.md](PUBLISHING.md#vertex-programs-from-your-extracted-archive)
-for the source layout and checks.
+for the source layout and checks. The launcher probes Python installations
+and prefers the actual `python.exe` when available. If Windows returns
+`0xC0000022` before `[ATV-PREP] Python started`, check the printed
+`[PYTHON]` interpreter attempts: the archive tool did not reach the
+BAD/BAH files.
 
 For comparable v126 race performance, leave those locally extracted game
 files under `game/`. The launcher generates the 180 native vertex variants
