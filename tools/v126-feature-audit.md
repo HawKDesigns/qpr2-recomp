@@ -187,3 +187,34 @@ behavior and frame-rate effects require a user run.
 per window still force later publication. The size matrix does not identify
 which game shader or texture consumes those targets; log binding identity only
 if the dependency drain remains a primary cost after the FIFO experiment.
+
+## Results (9): countdown baseline and X/Y crossing experiment
+
+The player reports roughly the same race performance and a repeatable
+~15 FPS during the starting countdown. Across 59 high-draw windows, the median
+executor time is 4.91 seconds per five seconds, with about 91,800 batch
+requests. The corrected FIFO method groups show approximately 2.88 seconds
+at BEGIN_END (which performs draw submission), but only 82 ms for index16
+payload methods. The preceding index shortcut therefore cannot solve this
+frame-rate limit. Draws using CPU boundary fallback remain around 10,200 per
+window, with roughly 0.93 seconds in CPU raster work. Reservation samples
+attribute roughly 0.60 seconds to texture handling and 0.36 seconds to target
+handling per window. Those are nested and/or sampled estimates.
+
+The fork now admits an X/Y crossing triangle to GPU preparation when its
+conservative whole-mesh bounds prove strictly positive W, finite bounded
+screen coordinates and, where enabled, fully interior depth. The existing
+hardware pixel pass clamps triangle coverage to the viewport. Full rejection
+outside one plane remains ahead of this change; near-plane, uncertain depth,
+nonfinite and extreme screen bounds still use the CPU clipper. It reports
+`[GPU-XY-CROSSING] enabled=1 promoted=...`, which lets the next run measure
+whether any meaningful fraction of the ~10,200 fallbacks is eligible. Set
+`RECOMP_GPU_XY_CROSSING=0` for an exact same-build fallback if visual output
+or frame pacing regresses. The conservative box/guard function passes a C11
+fixture for wholly inside, X/Y crossing, disabled, near-W, near-Z, outside,
+and extreme-bounds cases. The existing startup proof fixture now expects the
+new X/Y behavior. Windows compilation, pixel-equivalence and FPS impact still
+require a race run. The countdown is a useful before/after comparison point.
+
+This is a bounded viewport crossing experiment. It does not implement general
+GPU near-plane/depth clipping, AI instancing, or texture memory write tracking.
