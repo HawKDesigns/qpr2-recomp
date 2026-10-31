@@ -118,3 +118,38 @@ algorithm and does not claim an FPS gain.
 | Tick/render interpolation | Unimplemented; game timing retained. | Establish tick dependence first. |
 | Geometry batching and material binding | Ordered batching, native materials, state interning, short-run fusion. | CPU command processing and GPU synchronization remain costly. |
 | Texture and shader caches | Keyed shaders, byte-verified texture reuse and GPU feedback bridge. | Bulk conversion has no measured FPS case. |
+
+## Results (7): reservation and target flow diagnosis
+
+The run reports no noticeable FPS change, matching the previous measurement. In
+62 high-draw five-second windows, the median was 91,609 raster batches per
+window. About 78,000 raw draws were accepted, 10,000 used the CPU boundary
+fallback, and 2,700 were rejected by bounds in a representative window.
+Sampled accepted raw submission extrapolates to about 1.4 seconds per window,
+of which the sampled geometry reserve phase accounts for roughly 1.0 second.
+The whole accepted geometry path extrapolates to about 1.5 seconds. These
+measurements are nested and cannot be added. FIFO method emission estimates
+fluctuate, with a roughly 3.6-second median; its residual is often negative
+in short windows, so it is not a reliable independent time budget.
+
+The exact raster counters show around 1.1 seconds in target handling and 0.7
+seconds in texture handling in many race windows, with hundreds of target
+readbacks and up to about 300 dependency drains. The source of the reserve
+cost could be target transitions, texture/source comparisons, state setup, or
+queue writes. The fork now reports 1/64 sampled accepted reservation phases in
+`[GPU-RESERVE-CPU]`, sampled FIFO method groups in `[GPU-FIFO-KIND]`, and
+exact target size transitions, queued copies and synchronous reads in
+`[GPU-TARGET-FLOW]`. These counters should identify which path to change next.
+They do not change rendering behavior or claim a frame-rate gain. The FIFO
+scanner passes GCC C11 syntax checks; the Windows renderer still needs a
+Windows build and race validation.
+
+The user's ATV archive survey estimates around 65 submeshes per rider/ATV and
+up to eight vehicles. This plausibly explains the rise in draw requests but
+has not yet been verified against per-vehicle pushbuffer identities. The
+reported baked visibility data makes a second object occlusion layer a lower
+priority. The pixel shader table alone cannot rule out GPU shading time:
+sampled GPU timestamp totals need extrapolation and can overlap CPU waits.
+The next performance change should follow the measured reservation phase and
+target transition matrix rather than assume the asset count itself locates the
+host bottleneck.
