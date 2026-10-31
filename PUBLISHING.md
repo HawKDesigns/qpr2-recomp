@@ -8,52 +8,39 @@ local checkout.
 
 ## Vertex programs from your extracted archive
 
-The `ATV.zip` used here is **made locally from the contents of an
-extracted ATV folder**. It is not a ZIP found directly on the disc.
+`ATV.zip` is made locally from **all files inside the extracted ATV folder**.
+The ZIP root contains `VertexShader/Assembled/VS*` and other archive files;
+it does not contain an outer `ATV/` directory. The retail files and generated
+ZIP stay under ignored `game/`.
 
-1. Extract your own original Xbox game ISO into this repo's `game/` folder
-   with an Xbox ISO extraction utility. Find the matching `ATV.BAD` and
-   `ATV.BAH` files in those extracted game files. The commands below assume
-   `game/ATV.BAD` and `game/ATV.BAH`; adjust the paths if your ISO extractor
-   placed them elsewhere.
-2. Clone [BAHHHD-Extract](https://github.com/HawKDesigns/BAHHHD-Extract)
-   beside this QPR2 repository. From the **QPR2 repository root**, list and
-   then extract the pair into `game/ATV/`:
+1. Extract your own original Xbox ISO into `game/` with an Xbox ISO
+   extraction utility. Leave its matching `ATV.BAD` and `ATV.BAH` there
+   (or together in a nested directory under `game/`).
+2. Run `rebuild-and-run.ps1`. If
+   `third_party/xboxrecomp/src/kernel/nv2a_vsh_compiled.h` is missing, the
+   launcher runs `tools/prepare_qpr2_atv_archive.py`. That script uses
+   the MIT licensed [BAHHHD-Extract](https://github.com/HawKDesigns/BAHHHD-Extract)
+   copy at `tools/vendor/bahhhd_extract.py` to extract the **entire**
+   BAD/BAH pair into `game/ATV/`, then packages every file inside the
+   folder as `game/ATV.zip`. ZIP entry dates and attributes are fixed for
+   repeatable packaging. The launcher then compiles the native vertex header.
+3. Existing complete `game/ATV/` and `game/ATV.zip` are reused. If the
+   folder is incomplete but the BAD/BAH pair is present, the tool re-extracts
+   from the pair, retains the old folder as `game/ATV.backup-*/`, and writes
+   a new ZIP. An existing ZIP is checked against the BAH inventory when that
+   pair is available.
 
-   ```powershell
-   git clone https://github.com/HawKDesigns/BAHHHD-Extract.git ..\BAHHHD-Extract
-   py -3 ..\BAHHHD-Extract\bad_extract.py ".\game\ATV.BAD" --bah ".\game\ATV.BAH" --list
-   py -3 ..\BAHHHD-Extract\bad_extract.py ".\game\ATV.BAD" --bah ".\game\ATV.BAH" -o ".\game\ATV"
-   ```
+You can run the preparation independently to inspect the result:
 
-   If you already cloned the tool, skip the clone command. Resolve any
-   reported extraction failures before making the ZIP.
-3. **Go into `game/ATV/` and ZIP its contents**, naming the result
-   `game/ATV.zip`:
+```powershell
+py -3 tools/prepare_qpr2_atv_archive.py
+py -3 -c "import zipfile; z=zipfile.ZipFile('game/ATV.zip'); print(len([i for i in z.infolist() if not i.is_dir()]), 'files'); assert any(n.startswith('VertexShader/Assembled/VS') for n in z.namelist())"
+```
 
-   ```powershell
-   Push-Location .\game\ATV
-   Compress-Archive -Path .\* -DestinationPath ..\ATV.zip -Force
-   Pop-Location
-   ```
-
-   The ZIP root must contain `VertexShader/Assembled/VS*` entries, **without**
-   an outer `ATV/` directory. Check its layout:
-
-   ```powershell
-   py -3 -c "import zipfile; names=zipfile.ZipFile('game/ATV.zip').namelist(); assert any(n.startswith('VertexShader/Assembled/VS') for n in names), 'Shader entries are not at the ZIP root'; print('ATV.zip layout OK')"
-   ```
-
-4. From the QPR2 repository root, compile the local vertex programs:
-
-   ```powershell
-   py -3 tools/compile_qpr2_vertex_programs.py ".\game\ATV.zip"
-   ```
-
-This writes `third_party/xboxrecomp/src/kernel/nv2a_vsh_compiled.h`.
-It matches complete shader instruction words and uses live constants. Once
-`game/ATV.zip` exists, the current launcher can also generate this file before
-building.
+If you change the local source archive after generating the native header,
+remove that header and rerun the launcher so the vertex specialization can be
+regenerated. The launcher checks the known v126 shader fingerprint before
+building; differing game releases need their own verification.
 
 ## Literal combiner programs from ordinary play
 
@@ -62,8 +49,9 @@ user's checkout. The launcher learns the three reviewed material shapes from
 its own ordinary stderr logs; no F8 snapshots, timed captures, or manual
 extractor commands are required.
 
-1. Prepare `game/ATV.zip` and launch `rebuild-and-run.ps1`. This first
-   run uses the generic material fallback if no local fixture exists. Play
+1. Extract your game files under `game/` and launch `rebuild-and-run.ps1`.
+   The launcher prepares `ATV.zip` and the vertex header. This first run
+   uses the generic material fallback if no local fixture exists. Play
    normally through a 3D menu, preview, and race, then close the game.
 2. After the game exits, the launcher scans its saved run logs and writes
    `tools/fixtures/qpr2-literal-programs.json` only after all three exact
