@@ -36,8 +36,8 @@ specific implementation audit.
   `game/default.xbe` present.
 - Windows 10/11, Visual Studio 2022 with **Desktop development with C++**, and
   CMake 3.20 or newer for the host build.
-- Python 3.10 or newer and Capstone (`py -3 -m pip install capstone`) if you
-  run the analysis pipeline.
+- Python 3.10 or newer for local archive and shader preparation; Capstone
+  (`py -3 -m pip install capstone`) for the analysis pipeline.
 - A disc extraction tool such as `extract-xiso` or `xdvdfs` for your own disc.
 
 The tested build identity is in [docs/KNOWN_BUILD.md](docs/KNOWN_BUILD.md).
