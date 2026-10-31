@@ -153,3 +153,37 @@ sampled GPU timestamp totals need extrapolation and can overlap CPU waits.
 The next performance change should follow the measured reservation phase and
 target transition matrix rather than assume the asset count itself locates the
 host bottleneck.
+
+## Results (8): FIFO draw methods
+
+The latest run again reports no noticeable performance gain. Across 63
+high-draw five-second windows, the median raster request count is 90,212 and
+the executor is occupied for about 4.92 seconds. Accepted raw reservation
+samples extrapolate to a median of approximately 0.92 seconds: about 0.31
+seconds for target handling and 0.58 seconds for texture handling in its
+sampled accepted path. The unsampled raster counters, which include other
+paths, show about 1.19 seconds target time and 0.74 seconds texture time.
+These figures overlap other reported times.
+
+The prior `[GPU-FIFO-KIND] kind=draw_data` group extrapolates to a median of
+2.90 seconds and about 3.9 million calls per window. Its classification was
+too broad: it includes BEGIN_END, which submits a draw, and misses INLINE_ARRAY
+(at 0x1818). Therefore that total does not prove index copying costs 2.9
+seconds. The new report separates index16, index32, inline, draw_arrays and
+begin_end so that the next run can attribute the time correctly.
+
+The fork also takes a direct early path for the four payload methods
+ARRAY_ELEMENT16, ARRAY_ELEMENT32, INLINE_ARRAY and DRAW_ARRAYS. It preserves
+the original index limits, overflow counters, primitive gating and recorded
+values; the original switch remains reachable with
+`RECOMP_PB_FAST_ARRAYS=0` for an exact same-build comparison. This change is
+an optimization experiment, not a proven FPS increase. The FIFO scan and
+method executor both pass Linux GCC C11 syntax checks. Windows build, render
+behavior and frame-rate effects require a user run.
+
+`[GPU-TARGET-FLOW]` shows that most 640x480-to-128x128 and
+256x256-to-640x480 changes are queued, with virtually no synchronous
+`target-change` readback in the switch itself. Roughly 300 dependency drains
+per window still force later publication. The size matrix does not identify
+which game shader or texture consumes those targets; log binding identity only
+if the dependency drain remains a primary cost after the FIFO experiment.
