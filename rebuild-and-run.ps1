@@ -55,8 +55,15 @@ function Get-Qpr2ShaderTextHash([string]$shaderPath, [switch]$IgnoreArchiveMetad
         $hasher.Dispose()
     }
 }
-if ((Test-Path ".\\game\\ATV.zip" -PathType Leaf) -and
-    -not (Test-Path $nativeHeader -PathType Leaf)) {
+if (-not (Test-Path $nativeHeader -PathType Leaf)) {
+    # The extracted disc supplies ATV.BAD/ATV.BAH. The vendored MIT extractor
+    # expands all files into game/ATV/, then a deterministic ZIP places their
+    # contents (not an outer ATV folder) at the archive root.
+    Write-Host "[ATV-PREP] Preparing game/ATV.zip from the local archive or extracted folder"
+    & py -3 tools/prepare_qpr2_atv_archive.py
+    if ($LASTEXITCODE -ne 0) {
+        throw "ATV archive preparation failed: $LASTEXITCODE. Place your own ATV.BAD/ATV.BAH under game/ or provide a complete game/ATV/ folder."
+    }
     Write-Host "[SHADER-BUILD] Compiling native vertex variants from game/ATV.zip"
     & py -3 tools/compile_qpr2_vertex_programs.py ".\\game\\ATV.zip"
     if ($LASTEXITCODE -ne 0) { throw "Native vertex generation failed: $LASTEXITCODE" }
@@ -120,7 +127,7 @@ $shaderStatus | ForEach-Object { Write-Host "[SHADER-STATUS] $_" }
 if ($shaderStatus -match "missing|different hash") {
     Write-Warning "Local v126 shader programs are incomplete; generic fallbacks can substantially lower race FPS."
     if (-not (Test-Path ".\game\ATV.zip" -PathType Leaf)) {
-        Write-Host "Create game/ATV.zip from your own extracted ATV.BAD/BAH (see PUBLISHING.md)."
+        Write-Host "Place your own ATV.BAD/ATV.BAH under game/ or a complete game/ATV/ folder; the launcher prepares game/ATV.zip automatically (see PUBLISHING.md)."
     }
     if (-not (Test-Path -LiteralPath $materialFixture -PathType Leaf)) {
         Write-Host "Play one ordinary run through a 3D menu, preview, and race. The launcher learns the material states on exit; the next launch uses them."
