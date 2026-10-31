@@ -218,3 +218,28 @@ require a race run. The countdown is a useful before/after comparison point.
 
 This is a bounded viewport crossing experiment. It does not implement general
 GPU near-plane/depth clipping, AI instancing, or texture memory write tracking.
+
+## Results (10): startup proof regression repaired
+
+The user observed better ATV selection and a small rider selection gain, but
+slightly worse race FPS. The decisive log is
+`[GPU-GEOMETRY] unavailable or comparison failed`, followed by zero raw GPU
+draws and zero X/Y promotions for the entire run. The previous run typically
+had roughly 78,000 raw GPU draws and ~10,000 CPU boundary fallbacks per
+high-draw five-second window. With raw geometry disabled, CPU raster time
+rose from roughly 0.93 to 2.31 seconds per high-draw window. The menu gains
+cannot be credited to the X/Y crossing path because it never ran.
+
+The new bounding-box proof legitimately classifies the startup fixture's
+first loose box as X/Y crossing even though all its actual vertices are
+inside. Its old assertion still required the box to be uncertain, so startup
+rejected the entire raw geometry path. The fork now expects the new box result
+and retains the point and outside cases. A separate C11 fixture reproduced
+the actual three startup inputs and checked results 1, 1 and 0 with edge
+admission, plus 0 with the original mode. The startup path now retries the
+full raw GPU comparison with X/Y admission disabled if its new proof fails.
+That keeps the established raw GPU path available rather than silently
+forcing all race vertex work onto the CPU. Windows startup and actual pixel
+behavior remain to be verified in the next run. Confirm
+`[GPU-GEOMETRY] enabled=1`, nonzero raw draws, and then examine
+`[GPU-XY-CROSSING] promoted=` before interpreting the countdown FPS.
