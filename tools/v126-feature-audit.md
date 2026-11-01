@@ -243,3 +243,24 @@ forcing all race vertex work onto the CPU. Windows startup and actual pixel
 behavior remain to be verified in the next run. Confirm
 `[GPU-GEOMETRY] enabled=1`, nonzero raw draws, and then examine
 `[GPU-XY-CROSSING] promoted=` before interpreting the countdown FPS.
+
+## Screen-edge experiment withdrawn after freeze
+
+A run with the repaired proof hung after ATV selection and the game process
+would not close normally. The subsequent race run reached gameplay, but the
+menu gain disappeared and race start remained about 15 FPS. This latter log
+shows raw geometry enabled and only around 424 X/Y promotions per five-second
+race window, against roughly 8,700 remaining boundary fallbacks; CPU raster
+time was still about 0.99 seconds per window. The edge route had little
+leverage on the race bottleneck and introduced a hang risk.
+
+The fork's geometry implementation and state are restored byte-for-byte to
+the pre-edge commit `b020858c`, preserving the FIFO and reservation
+profiling but removing the crossing policy, fixture change and startup retry.
+The launcher now enforces its stated 360-second runtime limit using
+`WaitForExit(360000)`, then kills the game process tree and copies the
+redirected logs. For an immediate manual stop from another PowerShell window,
+run `taskkill /F /T /IM qpr2_recomp.exe`. Windows build and runtime recovery
+need confirmation on the user's machine. Stable 30 FPS remains open; the next
+optimization should target per-draw submission or a properly validated GPU
+clipper, not this small bounding-box exception.

@@ -532,14 +532,23 @@ Write-Host "If a visible artifact returns, press F8 once to capture two renderin
 $process = Start-Process `
     -FilePath (Join-Path $diagnosticBuildDir "Release\qpr2_recomp.exe") `
     -WorkingDirectory "$PWD" `
-    -Wait -PassThru `
+    -PassThru `
     -RedirectStandardOutput $tempStdout `
     -RedirectStandardError $tempStderr
 
+# Start-Process -Wait has no timeout. A frozen renderer must not hold this
+# PowerShell session indefinitely; retain its redirected logs after termination.
+$timedOut = -not $process.WaitForExit(360000)
+if ($timedOut) {
+    Write-Warning "QPR2 did not exit within 360 seconds; terminating its process tree. Temp logs: $tempLogDir"
+    & taskkill /F /T /PID $process.Id 2>&1 | Out-Null
+    $process.WaitForExit(10000) | Out-Null
+}
+$runExitCode = if ($timedOut) { 124 } elseif ($process.HasExited) { $process.ExitCode } else { 124 }
 Copy-Item -Force $tempStdout "$runLogDir\one-hundred-twenty-sixth-run.stdout.log"
 Copy-Item -Force $tempStderr "$runLogDir\one-hundred-twenty-sixth-run.stderr.log"
-$process.ExitCode | Set-Content "$runLogDir\one-hundred-twenty-sixth-run.exitcode.txt"
-Write-Host "Run finished with exit code $($process.ExitCode)."
+$runExitCode | Set-Content "$runLogDir\one-hundred-twenty-sixth-run.exitcode.txt"
+Write-Host "Run finished with exit code $runExitCode."
 Write-Host "Kept this run in $runLogDir (earlier attempts remain in their own folders)."
 
 # The normal stderr records distinct combiner states once per program. Learn
