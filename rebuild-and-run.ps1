@@ -544,7 +544,18 @@ if ($timedOut) {
     & taskkill /F /T /PID $process.Id 2>&1 | Out-Null
     $process.WaitForExit(10000) | Out-Null
 }
-$runExitCode = if ($timedOut) { 124 } elseif ($process.HasExited) { $process.ExitCode } else { 124 }
+# Keep an explicit status even if Start-Process does not expose ExitCode.
+$runExitCode = 125
+if ($timedOut) {
+    $runExitCode = 124
+} elseif ($process.HasExited) {
+    try {
+        $exitValue = $process.ExitCode
+        if ($null -ne $exitValue) { $runExitCode = [int]$exitValue }
+    } catch {
+        Write-Warning "Unable to read QPR2 exit code: $_"
+    }
+}
 Copy-Item -Force $tempStdout "$runLogDir\one-hundred-twenty-sixth-run.stdout.log"
 Copy-Item -Force $tempStderr "$runLogDir\one-hundred-twenty-sixth-run.stderr.log"
 $runExitCode | Set-Content "$runLogDir\one-hundred-twenty-sixth-run.exitcode.txt"

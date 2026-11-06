@@ -264,3 +264,31 @@ run `taskkill /F /T /IM qpr2_recomp.exe`. Windows build and runtime recovery
 need confirmation on the user's machine. Stable 30 FPS remains open; the next
 optimization should target per-draw submission or a properly validated GPU
 clipper, not this small bounding-box exception.
+
+## Latest run: AI visibility and target dependency source
+
+The November 5 run built and entered a race with raw geometry enabled.
+The restored geometry path has no X/Y promotion log. The user was in front
+of the AI for roughly the first half and behind visible AI in the last half.
+For the 22 full race windows after the race-state marker, the first 11
+had a median 22.1 FPS and the last 11 had 18.1 FPS. The batch medians
+were close (92,267 versus 93,194 requests per five seconds); the change
+in FPS cannot be explained by request count alone. The executor occupied
+about 4.9 seconds of each five-second window in both halves. Median
+`target-queued` readback wait rose from about 0.89 to 1.03 seconds,
+CPU raster from 0.97 to 1.00 seconds, and sampled target handling from
+0.28 to 0.41 seconds. These times can overlap and the front/behind
+comparison is not a controlled scene replay.
+
+The readback queue reports roughly 197 dependency drains in a typical late
+window. Its queued targets are frequently 640x480, 256x256 and 128x128.
+The pending-access function is called by guest memory access, explicit
+geometry reads, target binding, and texture source/palette handling; the
+existing counters do not say which caller triggers the drains. A profiling
+change now records `[GPU-DEPENDENCY-SOURCE]` per caller, target size and
+wall time, without changing overlap checks, ordering, or publication.
+This is a diagnostic step toward removing a specific unnecessary wait;
+it is not a predicted FPS gain. The uploaded results archive had an empty
+run-exitcode file despite a normal game-close marker. The launcher now
+writes a numeric fallback status (125) if the process exit code is unavailable.
+Windows build and race verification are outstanding.
