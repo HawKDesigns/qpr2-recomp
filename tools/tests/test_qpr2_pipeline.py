@@ -299,7 +299,13 @@ class PipelineTests(unittest.TestCase):
                              "    RECOMP_PC(0x001A831Au);\n"
                              "    eax = MEM32(esp + 0x10);\n"
                              "    RECOMP_PC(0x001A83B1u);\n"
+                             "    RECOMP_PC(0x001A83C5u);\n"
+                             "    _cf = 0; /* logical op clears CF */\n"
+                             "    MEM8(esi + 4) = MEM8(esi + 4) | ((8) & 0xFFu);\n"
                              "    RECOMP_PC(0x001A83CBu);\n")
+            connect = write_unit("recomp_0039.c", 0x001A9BA0,
+                                 "    RECOMP_PC(0x001A9BE7u);\n"
+                                 "    PUSH32(esp, ecx);\n")
             ui_first = write_unit("recomp_0019.c", 0x0010F440,
                                   "    RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x0010F45Cu);\n")
             ui = write_unit("recomp_0020.c", 0x0010FEE0,
@@ -312,7 +318,7 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(
                 pipeline.apply_known_generated_bridges(generated, "different"), 0)
             self.assertEqual(
-                pipeline.apply_known_generated_bridges(generated, digest), 19)
+                pipeline.apply_known_generated_bridges(generated, digest), 21)
             patched = bridge.read_text(encoding="utf-8")
             self.assertIn("requested_fence = MEM32(g_esp + 4)", patched)
             self.assertIn("recomp_nv2a_fence_wait(", patched)
@@ -330,6 +336,12 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("qpr2_xid_trace_completion(eax);", xid.read_text())
             self.assertIn("qpr2_xid_trace_match(esi, 1);", xid.read_text())
             self.assertIn("qpr2_xid_trace_match(esi, 0);", xid.read_text())
+            self.assertIn("((8) & 0xFFu);\n    qpr2_xid_publish_connection();",
+                          xid.read_text())
+            self.assertIn("if (MEM32(ebp + 4) == 0x001A83C5u) {",
+                          connect.read_text())
+            self.assertIn("qpr2_xid_defer_connection(eax, MEM32(esi + 0x14));",
+                          connect.read_text())
             for address in addresses:
                 self.assertIn(
                     f"void sub_{address:08X}(void) "

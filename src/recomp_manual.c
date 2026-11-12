@@ -54,6 +54,33 @@ void qpr2_xid_trace_match(uint32_t controller, int accepted)
     fflush(stderr);
 }
 
+static RECOMP_TLS uint32_t qpr2_pending_xid_type;
+static RECOMP_TLS uint32_t qpr2_pending_xid_port;
+
+void qpr2_xid_defer_connection(uint32_t device_type, uint32_t port)
+{
+    qpr2_pending_xid_type = device_type;
+    qpr2_pending_xid_port = port;
+}
+
+void qpr2_xid_publish_connection(void)
+{
+    const uint32_t device_type = qpr2_pending_xid_type;
+    if (!device_type) return;
+    qpr2_pending_xid_type = 0;
+
+    /* Publish the connected bit before the change that tells XInput to
+     * read it. The host can poll concurrently with the guest USB DPC. */
+    const uint32_t mask = 1u << (qpr2_pending_xid_port & 31u);
+    MEM32(device_type) |= mask;
+    MEM32(device_type + 4) |= mask;
+    if (getenv("RECOMP_INPUT_DIAG")) {
+        fprintf(stderr, "[XPP-XID] connected type=%08X port=%u mask=%08X\n",
+                device_type, qpr2_pending_xid_port, mask);
+        fflush(stderr);
+    }
+}
+
 /* QPR2 reaches WBINVD after publishing GPU/contiguous-memory state during
  * D3D device setup. A user-mode host cannot execute that privileged
  * instruction; translated guest memory is already coherent, so retain the

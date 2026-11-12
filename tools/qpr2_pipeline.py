@@ -494,6 +494,8 @@ def apply_known_generated_bridges(generated_dir: Path, xbe_sha256: str) -> int:
         "\nint recomp_nv2a_fence_wait(uint32_t device, uint32_t requested);"
         "\nvoid qpr2_xid_trace_completion(uint32_t request);"
         "\nvoid qpr2_xid_trace_match(uint32_t controller, int accepted);"
+        "\nvoid qpr2_xid_defer_connection(uint32_t device_type, uint32_t port);"
+        "\nvoid qpr2_xid_publish_connection(void);"
     )
     if declarations not in header:
         if header.count(anchor) != 1 or any(
@@ -576,8 +578,26 @@ def apply_known_generated_bridges(generated_dir: Path, xbe_sha256: str) -> int:
          "    qpr2_xid_trace_match(esi, 1);\n"),
         ("    RECOMP_PC(0x001A83CBu);\n",
          "    qpr2_xid_trace_match(esi, 0);\n"),
+        ("    RECOMP_PC(0x001A83C5u);\n"
+         "    _cf = 0; /* logical op clears CF */\n"
+         "    MEM8(esi + 4) = MEM8(esi + 4) | ((8) & 0xFFu);\n",
+         "    qpr2_xid_publish_connection();\n"),
     ):
         body = add_after(body, xid, marker, hook)
+    replace_body(path, match, body)
+
+    # The connection callback advertises the device before returning to XID,
+    # which sets the ready bit required by XInputOpen. Defer the notification
+    # for that one success caller so a host thread cannot consume it early.
+    connect = 0x001A9BA0
+    path, match = find_function(connect)
+    body = add_after(
+        match.group(), connect, "    RECOMP_PC(0x001A9BE7u);\n",
+        "    if (MEM32(ebp + 4) == 0x001A83C5u) {\n"
+        "        qpr2_xid_defer_connection(eax, MEM32(esi + 0x14));\n"
+        "        goto loc_001A9BF1;\n"
+        "    }\n",
+    )
     replace_body(path, match, body)
 
     macros = {
