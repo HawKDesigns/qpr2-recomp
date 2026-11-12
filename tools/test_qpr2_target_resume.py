@@ -38,8 +38,9 @@ int main(int argc,char **argv){
  assert(ready && g.native && g.readback_queue);
  NvGpuCount count;
  if(resume_corrupt || fail_resume_malloc || !strcmp(mode,"disabled") || !strcmp(mode,"no-bridge")){
-  assert(!g.resume.enabled);begin_resume(0xFF123456);draw_target(0);
-  assert(!g.resume.restores && all_maps && MEM(colors_at(0))==0xFF123456 && nv_gpu_sync(&count)==1);
+  assert(!g.resume.enabled);uint64_t restored=g.resume.restores;
+  begin_resume(0xFF123456);draw_target(0);
+  assert(g.resume.restores==restored && all_maps && MEM(colors_at(0))==0xFF123456 && nv_gpu_sync(&count)==1);
   puts("PASS: color/depth comparison failure and opt-out retain validated native rendering with CPU target dependencies");return 0;
  }
  assert(g.resume.enabled && g.bridge.enabled);

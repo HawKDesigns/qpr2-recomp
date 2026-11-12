@@ -282,9 +282,11 @@ static void ID3D11DeviceContext_CopyResource(ID3D11DeviceContext*c,ID3D11Resourc
 }
 static void ID3D11DeviceContext_CopySubresourceRegion(ID3D11DeviceContext*c,ID3D11Resource*dst,unsigned ds,unsigned x,unsigned y,unsigned z,ID3D11Resource*src,unsigned ss,const D3D11_BOX*box){
  (void)c;assert(!ds && !ss && !y && !z && box && !box->top && !box->front && box->bottom==1 && box->back==1);
- assert(!dst->mapped && !src->mapped && dst->desc.StructureByteStride==4 && src->desc.StructureByteStride==4);
+ unsigned stride=src->desc.StructureByteStride;
+ assert(!dst->mapped && !src->mapped && (stride==4 || stride==8));
+ assert(dst->desc.Usage==D3D11_USAGE_STAGING || dst->desc.StructureByteStride==stride);
  assert(box->right>=box->left && box->right<=src->desc.ByteWidth && x+box->right-box->left<=dst->desc.ByteWidth);
- assert(!(x%4) && !(box->left%4) && !(box->right%4));
+ assert(!(x%stride) && !(box->left%stride) && !(box->right%stride));
  for(unsigned i=0;i<5;i++)assert(!bound_srv[i] || (bound_srv[i]->buffer!=src && bound_srv[i]->buffer!=dst));
  for(unsigned i=0;i<4;i++)assert(!bound_uav[i] || (bound_uav[i]->buffer!=src && bound_uav[i]->buffer!=dst));
  memcpy(dst->data+x,src->data+box->left,box->right-box->left);

@@ -44,11 +44,53 @@ static void tint(uint32_t argb){
 static int palette_decode(void *opaque,uint32_t face,uint32_t x,uint32_t y,uint32_t *out){
  (void)face;const uint8_t *indices=opaque;*out=MEM(colors_at(0)+indices[y*16+x]*4);return 1;
 }
+static void check_readonly_depth(NvGpuCount *count){
+ for(unsigned fast=0;fast<2;fast++)for(unsigned bpp=2;bpp<=4;bpp+=2){
+  reset_queue();g.fast_pending_access=fast;
+  queue_state.depth_mask=0;queue_state.bpp=bpp;queue_state.pitch=16*bpp;
+  queue_state.format=bpp==2?0x121:0x128;
+  tint(0xFFFF0000);draw_target(0);
+  assert(nv_gpu_submit()==1 && !g.readonly_depth.written);
+  tint(0xFF00FF00);
+  assert(nv_gpu_draw(&queue_state,&queue_tri,1,ram+colors_at(1),queue_depths[0],16,empty_sources)==1);
+  assert(!all_maps && g.pending_count==1 && !g.pending[0].publish_depth && !MEM(colors_at(0)));
+  /* CPU depth changes between submission and publication must survive the
+   * old snapshot. A subsequent GPU depth write still takes precedence. */
+  queue_depths[0][0]=50;
+  assert(gpu_pending_drain() && queue_depths[0][0]==50);
+  assert(MEM(colors_at(0))==(bpp==2?0xF800F800:0xFFFF0000));
+  queue_state.depth_mask=1;
+  assert(nv_gpu_draw(&queue_state,&queue_tri,1,ram+colors_at(1),queue_depths[0],16,empty_sources)==1);
+  queue_state.depth_mask=0;all_maps=0;
+  assert(nv_gpu_draw(&queue_state,&queue_tri,1,ram+colors_at(2),queue_depths[0],16,empty_sources)==1);
+  assert(all_maps==2 && !g.pending_count && queue_depths[0][0]==10);
+  assert(nv_gpu_sync(count)==1 && queue_depths[0][0]==10);
+ }
+ reset_queue();queue_state.depth_mask=0;draw_target(0);
+ assert(gpu_clear(0,0,16,16,2,0,40)==1);
+ assert(nv_gpu_draw(&queue_state,&queue_tri,1,ram+colors_at(1),queue_depths[0],16,empty_sources)==1);
+ assert(all_maps==2 && !g.pending_count && queue_depths[0][0]==40);
+ assert(nv_gpu_sync(count)==1);
+ reset_queue();queue_state.depth_mask=0;
+ float *alias_depth=(float*)(ram+colors_at(0));
+ for(unsigned i=0;i<256;i++)alias_depth[i]=100;
+ assert(nv_gpu_draw(&queue_state,&queue_tri,1,ram+colors_at(0),alias_depth,16,empty_sources)==1);
+ assert(nv_gpu_draw(&queue_state,&queue_tri,1,ram+colors_at(1),alias_depth,16,empty_sources)==1);
+ assert(all_maps==2 && !g.pending_count && alias_depth[0]==100);
+ assert(nv_gpu_sync(count)==1 && g.readonly_depth.shared_binds==4);
+ /* An exact resume can inherit depth written by the retired snapshot. */
+ reset_queue();draw_target(0);draw_target(1);queue_state.depth_mask=0;draw_target(0);
+ assert(g.resume.active && g.resume.retire_pixels && g.readonly_depth.written && !all_maps);
+ assert(nv_gpu_draw(&queue_state,&queue_tri,1,ram+colors_at(2),queue_depths[0],16,empty_sources)==1);
+ assert(all_maps && !g.pending_count && queue_depths[0][0]==10);
+ assert(nv_gpu_sync(count)==1);
+}
 int main(int argc,char **argv){
  const char *mode=argc>1?argv[1]:"default";
  ram=mmap(NULL,0x84000000ull,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_ANONYMOUS|MAP_NORESERVE,-1,0);assert(ram!=MAP_FAILED);g_memory_offset=(ptrdiff_t)ram;
  setenv("RECOMP_GPU_RASTER","1",1);setenv("RECOMP_GPU_ASYNC","0",1);setenv("RECOMP_GPU_FENCE_BATCH","1",1);setenv("RECOMP_GPU_SLICE_PIPELINE","0",1);
  setenv("RECOMP_GPU_DIAGNOSTIC_COUNTERS",!strcmp(mode,"quiet")?"0":"1",1);
+ setenv("RECOMP_GPU_READONLY_DEPTH",!strcmp(mode,"readonly-depth")?"1":"0",1);
  if(!strcmp(mode,"disabled"))setenv("RECOMP_GPU_READBACK_QUEUE","0",1);else unsetenv("RECOMP_GPU_READBACK_QUEUE");
  if(!strcmp(mode,"gate-corrupt"))corrupt_queued_copy=1;
  if(!strcmp(mode,"gate-map"))fail_queued_map_at=1;
@@ -67,6 +109,10 @@ int main(int argc,char **argv){
  assert(copy_calls==(g.deferred_readback.enabled && g.bridge.enabled?4u:8u));tint(0xFF667788);draw_target(5);
  assert(all_maps==8 && g.pending_count==1 && MEM(colors_at(0))==0xFF112233);
  NvGpuCount count;assert(nv_gpu_sync(&count)==1 && !g.pending_count);
+ if(!strcmp(mode,"readonly-depth")){
+  check_readonly_depth(&count);
+  puts("PASS: depth-read-only binds defer color publication while GPU depth writes, depth clears and overlapping destinations still drain");return 0;
+ }
  for(unsigned i=0;i<6;i++)assert(MEM(colors_at(i))==(i==5?0xFF667788:0xFF112233+i*0x10101) && queue_depths[i][0]==10);
  assert(count.zpass>0 && (g.native_diagnostics?count.pixels>0:!count.pixels));
  puts("PASS: five independent targets retain exact snapshots with zero Maps; bounded queue drains on capacity; immutable snapshots and visibility counts survive GPU-buffer reuse");
@@ -173,7 +219,7 @@ with tempfile.TemporaryDirectory(prefix="qpr2-readback-queue-") as folder:
     (tmp / "test.c").write_text(code)
     exe = tmp / "test"
     subprocess.run(["gcc", "-std=gnu11", "-O1", "-fsanitize=undefined,float-cast-overflow", "-fno-sanitize-recover=all", "-Werror=implicit-function-declaration", "-Werror=incompatible-pointer-types", "-ffunction-sections", "-fdata-sections", "-I" + str(tmp), "-I" + str(root / "tools"), "-I" + str(kernel), "-I" + str(root / "third_party/xboxrecomp/src"), str(tmp / "test.c"), str(kernel / "nv2a_gpu_tiles.c"), str(kernel / "nv2a_vsh_interp.c"), str(kernel / "nv2a_combiner.c"), "-Wl,--gc-sections", "-pthread", "-lm", "-o", str(exe)], check=True)
-    for mode in ["default", "quiet", "disabled", "gate-corrupt", "gate-map"]:
+    for mode in ["default", "quiet", "disabled", "gate-corrupt", "gate-map", "readonly-depth"]:
         print("RUN readback queue " + mode, flush=True)
         subprocess.run([str(exe), mode], cwd=tmp, check=True, timeout=90)
-    print("PASS: all 5 readback queue modes passed")
+    print("PASS: all 6 readback queue modes passed")
