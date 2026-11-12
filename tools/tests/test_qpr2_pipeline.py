@@ -68,6 +68,11 @@ class PipelineTests(unittest.TestCase):
                     "called_by": [],
                 },
                 {
+                    "start": "0x000AB0F0",
+                    "end": "0x000AB8AB",
+                    "section": ".text",
+                },
+                {
                     "start": "0x000BCA80",
                     "end": "0x000BCB80",
                     "size": 0x100,
@@ -82,18 +87,22 @@ class PipelineTests(unittest.TestCase):
             ]), encoding="utf-8")
 
             self.assertEqual(
-                pipeline.apply_known_function_splits(path, digest), 2)
+                pipeline.apply_known_function_splits(path, digest), 3)
             functions = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual([item["start"] for item in functions],
                              ["0x00026180", "0x000261A0",
+                              "0x000AB0F0", "0x000AB410",
                               "0x000BCA80", "0x000BCAA0"])
             self.assertEqual(functions[0]["end"], "0x000261A0")
             self.assertEqual(functions[1]["end"], "0x00026270")
             self.assertEqual(functions[1]["detection_method"],
                              "verified_build_split")
-            self.assertEqual(functions[2]["end"], "0x000BCAA0")
-            self.assertEqual(functions[3]["end"], "0x000BCB80")
-            self.assertEqual(functions[3]["detection_method"],
+            self.assertEqual(functions[2]["end"], "0x000AB410")
+            self.assertEqual(functions[3]["end"], "0x000AB8AB")
+            self.assertTrue(functions[3]["external_entry"])
+            self.assertEqual(functions[4]["end"], "0x000BCAA0")
+            self.assertEqual(functions[5]["end"], "0x000BCB80")
+            self.assertEqual(functions[5]["detection_method"],
                              "verified_build_split")
 
     def test_function_split_is_not_applied_to_another_build(self):
@@ -181,11 +190,15 @@ class PipelineTests(unittest.TestCase):
                  "detection_method": "call_target"},
                 {"start": "0x001A7450", "end": "0x001A74BC", "section": "XPP",
                  "detection_method": "tail_jump_alias"},
+                {"start": "0x000AB410", "end": "0x000AB8AB", "section": ".text",
+                 "detection_method": "tail_jump_alias"},
+                {"start": "0x000AB8B0", "end": "0x000AB8F0", "section": ".text",
+                 "detection_method": "tail_jump_alias"},
                 {"start": "0x000BCAA0", "end": "0x000BCB80", "section": ".text",
                  "detection_method": "tail_jump_alias"},
             ]), encoding="utf-8")
-            self.assertEqual(pipeline.apply_known_function_splits(path, digest), 2)
-            self.assertEqual(pipeline.apply_known_function_ranges(path, digest), 21)
+            self.assertEqual(pipeline.apply_known_function_splits(path, digest), 3)
+            self.assertEqual(pipeline.apply_known_function_ranges(path, digest), 22)
             by_start = {item["start"]: item
                         for item in json.loads(path.read_text(encoding="utf-8"))}
             table_entry = by_start["0x00193110"]
@@ -199,6 +212,8 @@ class PipelineTests(unittest.TestCase):
                              "verified_runtime_target")
             self.assertEqual(by_start["0x000261A0"]["detection_method"],
                              "verified_build_split")
+            self.assertEqual(by_start["0x000AB8B0"]["end"], "0x000AB8EA")
+            self.assertTrue(by_start["0x000AB8B0"]["external_entry"])
             self.assertEqual(pipeline.apply_known_function_splits(path, digest), 0)
             self.assertEqual(pipeline.apply_known_function_ranges(path, digest), 0)
 

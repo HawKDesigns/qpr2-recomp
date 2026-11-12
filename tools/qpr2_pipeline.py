@@ -36,6 +36,10 @@ KNOWN_FUNCTION_SPLITS = {
         # two.  Without this split RECOMP_ICALL treats the live method call as
         # unresolved and silently skips it, leaving invalid object state.
         0x000BCAA0,
+        # The recovered race callback at 0x000AB8B0 tail-jumps here on one
+        # state. This independent routine starts after the preceding ret and
+        # padding, inside a range that discovery attributed to 0x000AB0F0.
+        0x000AB410,
     ),
 }
 KNOWN_FUNCTION_RANGES = {
@@ -84,6 +88,10 @@ KNOWN_FUNCTION_RANGES = {
         # the periodic interrupt pipe.  Skipping it leaves a fully enumerated
         # USB device with no input reports scheduled.
         (0x001A864E, 0x001A87A2, "XPP", "verified_runtime_target"),
+        # Observed in the live race dispatch and independently identified
+        # by the vtable scanner. Include the conditional arms past the
+        # scanner's estimated end, through the final tail jump.
+        (0x000AB8B0, 0x000AB8EA, ".text", "verified_runtime_target"),
     ),
 }
 KNOWN_RUNTIME_PATCHES = {
