@@ -167,6 +167,52 @@ class PipelineTests(unittest.TestCase):
             with self.assertRaises(pipeline.PipelineError):
                 pipeline.apply_known_function_ranges(path, digest)
 
+    def test_v017_tail_aliases_are_promoted_to_verified_entries(self):
+        digest = next(iter(pipeline.KNOWN_FUNCTION_RANGES))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "functions.json"
+            path.write_text(json.dumps([
+                {"start": "0x000261A0", "end": "0x00026270", "section": ".text",
+                 "detection_method": "tail_jump_alias", "confidence": 0.4},
+                {"start": "0x00193110", "end": "0x00193150", "section": "D3D",
+                 "detection_method": "tail_jump_alias", "size": 64,
+                 "num_instructions": 25, "called_by": [0x00194000]},
+                {"start": "0x00193150", "end": "0x001931A6", "section": "D3D",
+                 "detection_method": "call_target"},
+                {"start": "0x001A7450", "end": "0x001A74BC", "section": "XPP",
+                 "detection_method": "tail_jump_alias"},
+                {"start": "0x000BCAA0", "end": "0x000BCB80", "section": ".text",
+                 "detection_method": "tail_jump_alias"},
+            ]), encoding="utf-8")
+            self.assertEqual(pipeline.apply_known_function_splits(path, digest), 2)
+            self.assertEqual(pipeline.apply_known_function_ranges(path, digest), 21)
+            by_start = {item["start"]: item
+                        for item in json.loads(path.read_text(encoding="utf-8"))}
+            table_entry = by_start["0x00193110"]
+            self.assertEqual(table_entry["end"], "0x0019314E")
+            self.assertEqual(table_entry["size"], 0x3E)
+            self.assertEqual(table_entry["detection_method"], "verified_pointer_table")
+            self.assertEqual(table_entry["called_by"], [0x00194000])
+            self.assertNotIn("num_instructions", table_entry)
+            self.assertEqual(by_start["0x00193150"]["end"], "0x001931A6")
+            self.assertEqual(by_start["0x001A7450"]["detection_method"],
+                             "verified_runtime_target")
+            self.assertEqual(by_start["0x000261A0"]["detection_method"],
+                             "verified_build_split")
+            self.assertEqual(pipeline.apply_known_function_splits(path, digest), 0)
+            self.assertEqual(pipeline.apply_known_function_ranges(path, digest), 0)
+
+    def test_pointer_table_range_rejects_truncated_tail_alias(self):
+        digest = next(iter(pipeline.KNOWN_FUNCTION_RANGES))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "functions.json"
+            path.write_text(json.dumps([
+                {"start": "0x00193110", "end": "0x00193120", "section": "D3D",
+                 "detection_method": "tail_jump_alias"},
+            ]), encoding="utf-8")
+            with self.assertRaisesRegex(pipeline.PipelineError, "unexpected end"):
+                pipeline.apply_known_function_ranges(path, digest)
+
     def test_runtime_patches_are_hash_locked_and_idempotent(self):
         digest = next(iter(pipeline.KNOWN_RUNTIME_PATCHES))
         with tempfile.TemporaryDirectory() as directory:
@@ -231,42 +277,47 @@ class PipelineTests(unittest.TestCase):
             header.write_text(
                 "void recomp_memory_fence(uint32_t va);\n", encoding="utf-8"
             )
-            bridge = generated / "recomp_0033.c"
-            bridge.write_text(
-                "void sub_00196CF0(void)\n{\n"
-                "    RECOMP_PC(0x00196DF4u);\n"
-                + "    MEM32(eax + 0x100410) = ecx;\n" * 3
-                + "    MEM32(ecx + 0x40) = edx;\n" * 2
-                + "    MEM32(edx + 0x40) = eax;\n"
-                + "}\n",
-                encoding="utf-8",
-            )
+            def write_unit(filename, address, instructions):
+                path = generated / filename
+                path.write_text('#include "recomp_funcs.h"\n'
+                                f"void sub_{address:08X}(void)\n{{\n"
+                                + instructions + "}\n", encoding="utf-8")
+                return path
 
-            ui = generated / "recomp_0020.c"
-            ui.write_text(
-                '#include "recomp_funcs.h"\n'
-                "void sub_0010FEE0(void) {\n"
-                "    RECOMP_PC(0x0010FEE0u);\n"
-                "}\n"
-                + "".join(
-                    f"RECOMP_ICALL_SAFE_AT{suffix}(_icall_target, _icall_esp, "
-                    f"0x{site:08X}u);\n"
-                    for site, suffix in ((0x0010F45C, ""), (0x0010FF29, "_CC"),
-                                         (0x0010FF55, ""), (0x0010FF61, ""))
-                ),
-                encoding="utf-8",
-            )
+            bridge = write_unit("recomp_0033.c", 0x00196CF0,
+                                "    RECOMP_PC(0x00196DF4u);\n")
+            flush = "    MEM32(eax + 0x100410) = ecx;\n"
+            submit_edx = "    MEM32(ecx + 0x40) = edx;\n"
+            submit_eax = "    MEM32(edx + 0x40) = eax;\n"
+            other_units = [
+                write_unit("recomp_0034.c", 0x00196FB0, flush + submit_edx + submit_eax),
+                write_unit("recomp_0035.c", 0x001970C0, flush + submit_edx),
+                write_unit("recomp_0036.c", 0x001971F0, flush),
+            ]
+            unrelated = write_unit("recomp_0037.c", 0x001128E0, submit_edx)
+            ui_first = write_unit("recomp_0019.c", 0x0010F440,
+                                  "    RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x0010F45Cu);\n")
+            ui = write_unit("recomp_0020.c", 0x0010FEE0,
+                            "    RECOMP_PC(0x0010FEE0u);\n" + "".join(
+                                f"    RECOMP_ICALL_SAFE_AT{suffix}(_icall_target, _icall_esp, "
+                                f"0x{site:08X}u);\n"
+                                for site, suffix in ((0x0010FF29, "_CC"),
+                                                     (0x0010FF55, ""), (0x0010FF61, ""))))
 
             self.assertEqual(
                 pipeline.apply_known_generated_bridges(generated, "different"), 0)
             self.assertEqual(
-                pipeline.apply_known_generated_bridges(generated, digest), 15)
+                pipeline.apply_known_generated_bridges(generated, digest), 16)
             patched = bridge.read_text(encoding="utf-8")
             self.assertIn("requested_fence = MEM32(g_esp + 4)", patched)
-            self.assertEqual(patched.count("recomp_nv2a_cache_flush("), 3)
-            self.assertEqual(patched.count("recomp_nv2a_submit("), 3)
             self.assertIn("recomp_nv2a_fence_wait(", patched)
-            self.assertEqual(ui.read_text().count("QPR2_UI_ICALL("), 3)
+            others = "".join(path.read_text(encoding="utf-8") for path in other_units)
+            self.assertEqual(others.count("recomp_nv2a_cache_flush("), 3)
+            self.assertEqual(others.count("recomp_nv2a_submit("), 3)
+            self.assertNotIn("recomp_nv2a_submit(", unrelated.read_text())
+            self.assertIn("QPR2_UI_ICALL(", ui_first.read_text())
+            self.assertIn('#include "../../qpr2_ui_trace.h"', ui_first.read_text())
+            self.assertEqual(ui.read_text().count("QPR2_UI_ICALL("), 2)
             self.assertIn("QPR2_UI_ICALL_CC(", ui.read_text())
             self.assertIn("qpr2_ui_trace(0, 0x0010FEE0u", ui.read_text())
             self.assertIn("void recomp_nv2a_submit(", header.read_text())

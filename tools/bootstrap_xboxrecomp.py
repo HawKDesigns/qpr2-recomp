@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DESTINATION = ROOT / "third_party" / "xboxrecomp"
 REPOSITORY = "https://github.com/HawKDesigns/xboxrecomp.git"
-COMMIT = "fb0c90697620e19d5adad78d028d594a642e0fb3"
+COMMIT = (ROOT / "tools" / "xboxrecomp-pin.txt").read_text(encoding="utf-8").strip()
 
 
 def run(*args: str, cwd: Path | None = None) -> None:
@@ -26,6 +26,9 @@ def main() -> int:
     if (DESTINATION / ".git").exists():
         run("git", "fetch", "origin", COMMIT, cwd=DESTINATION)
     elif DESTINATION.exists() and any(DESTINATION.iterdir()):
+        if not (DESTINATION / "tools" / "recomp" / "__main__.py").is_file():
+            raise SystemExit(f"{DESTINATION} contains an incomplete XboxRecomp copy. "
+                             "Move it aside before fetching the pinned runtime.")
         print(
             f"{DESTINATION} already contains a source-archive copy. "
             "No download is needed."

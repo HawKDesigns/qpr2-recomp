@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -223,7 +224,16 @@ def apply_known_function_splits(functions_path: Path, xbe_sha256: str) -> int:
     functions = json.loads(functions_path.read_text(encoding="utf-8"))
     changed = 0
     for split_at in starts:
-        if any(parse_int(item["start"]) == split_at for item in functions):
+        existing = next(
+            (item for item in functions if parse_int(item["start"]) == split_at),
+            None,
+        )
+        if existing is not None:
+            if existing.get("detection_method") == "tail_jump_alias":
+                existing["detection_method"] = "verified_build_split"
+                existing["confidence"] = 1.0
+                existing["external_entry"] = True
+                changed += 1
             continue
         owner = next(
             (item for item in functions
@@ -253,6 +263,7 @@ def apply_known_function_splits(functions_path: Path, xbe_sha256: str) -> int:
             "section": owner["section"],
             "confidence": 1.0,
             "detection_method": "verified_build_split",
+            "external_entry": True,
             "has_prologue": False,
             "called_by": [],
         })
@@ -299,16 +310,24 @@ def apply_known_function_ranges(functions_path: Path, xbe_sha256: str) -> int:
             None,
         )
         if existing is not None:
-            if parse_int(existing["end"]) != end:
+            discovered_end = parse_int(existing["end"])
+            # v0.17 discovers these table/callback entries as tail aliases
+            # and commonly extends them through alignment to the next start.
+            # Only narrow an alias in the verified section that already
+            # covers the whole known body.
+            alias = (existing.get("detection_method") == "tail_jump_alias"
+                     and existing.get("section") == section
+                     and discovered_end >= end)
+            if discovered_end != end and not alias:
                 raise PipelineError(
                     f"verified function 0x{start:08X} already has unexpected "
                     f"end {existing['end']}"
                 )
-            continue
 
         overlap = next(
             (item for item in functions
-             if start < parse_int(item["end"])
+             if item is not existing
+             and start < parse_int(item["end"])
              and end > parse_int(item["start"])),
             None,
         )
@@ -318,6 +337,16 @@ def apply_known_function_ranges(functions_path: Path, xbe_sha256: str) -> int:
                 f"{overlap['start']}-{overlap['end']}"
             )
 
+        if existing is not None:
+            if alias:
+                existing.update(end=f"0x{end:08X}", size=end - start,
+                                confidence=1.0, detection_method=detection_method,
+                                external_entry=True)
+                existing.pop("num_instructions", None)
+                existing.pop("calls_to", None)
+                changed += 1
+            continue
+
         functions.append({
             "start": f"0x{start:08X}",
             "end": f"0x{end:08X}",
@@ -326,6 +355,7 @@ def apply_known_function_ranges(functions_path: Path, xbe_sha256: str) -> int:
             "section": section,
             "confidence": 1.0,
             "detection_method": detection_method,
+            "external_entry": True,
             "has_prologue": False,
             "called_by": [],
         })
@@ -474,107 +504,104 @@ def apply_known_generated_bridges(generated_dir: Path, xbe_sha256: str) -> int:
         )
         changed += 1
 
-    # Locate the functions by guest address so --split can change TU numbering.
-    candidates = [
-        path for path in generated_dir.glob("recomp_*.c")
-        if "void sub_00196CF0(void)" in path.read_text(encoding="utf-8")
-    ]
-    if len(candidates) != 1:
-        raise PipelineError(
-            f"NV2A bridge function matched {len(candidates)} generated files"
-        )
-    bridge_path = candidates[0]
-    source = bridge_path.read_text(encoding="utf-8")
-    patches = (
-        (
-            "void sub_00196CF0(void)\n{\n",
-            "void sub_00196CF0(void)\n{\n"
-            "    const uint32_t requested_fence = MEM32(g_esp + 4);\n",
-            1,
-        ),
-        (
-            "    RECOMP_PC(0x00196DF4u);\n",
-            "    RECOMP_PC(0x00196DF4u);\n"
-            "    if (recomp_nv2a_fence_wait(esi, requested_fence)) "
-            "goto loc_00196E0F;\n",
-            1,
-        ),
-        (
-            "    MEM32(eax + 0x100410) = ecx;\n",
-            "    MEM32(eax + 0x100410) = ecx;\n"
-            "    recomp_nv2a_cache_flush(eax + 0x100410);\n",
-            3,
-        ),
-        (
-            "    MEM32(ecx + 0x40) = edx;\n",
-            "    MEM32(ecx + 0x40) = edx;\n"
-            "    recomp_nv2a_submit(ecx + 0x40, edx);\n",
-            2,
-        ),
-        (
-            "    MEM32(edx + 0x40) = eax;\n",
-            "    MEM32(edx + 0x40) = eax;\n"
-            "    recomp_nv2a_submit(edx + 0x40, eax);\n",
-            1,
-        ),
-    )
-    for needle, replacement, expected in patches:
-        if source.count(replacement) == expected:
-            continue
-        if source.count(replacement) or source.count(needle) != expected:
-            raise PipelineError(
-                f"NV2A bridge in {bridge_path.name} changed shape: "
-                f"expected {expected} instances of {needle.strip()}"
-            )
-        source = source.replace(needle, replacement)
-        changed += expected
-    bridge_path.write_text(source, encoding="utf-8")
+    # v0.17 can place neighboring routines in different translation units.
+    # Match each verified instruction only inside its guest function body.
+    sources = {path: path.read_text(encoding="utf-8")
+               for path in generated_dir.glob("recomp_*.c")}
+    modified = set()
 
+    def find_function(address: int) -> tuple[Path, re.Match[str]]:
+        signature = rf"^void sub_{address:08X}\(void\)\n\{{\n.*?^\}}(?=\n|$)"
+        candidates = [(path, match) for path, source in sources.items()
+                      for match in re.finditer(signature, source, re.MULTILINE | re.DOTALL)]
+        if len(candidates) != 1:
+            raise PipelineError(f"verified bridge function 0x{address:08X} "
+                                f"matched {len(candidates)} generated bodies")
+        return candidates[0]
 
-    # Keep the faulting UI path observable in a clean build. The earlier
-    # generated files carried these probes by hand, leaving UI-HISTORY empty
-    # after 'all' replaced them.
-    ui_candidates = [
-        path for path in generated_dir.glob("recomp_*.c")
-        if "void sub_0010FEE0(void)" in path.read_text(encoding="utf-8")
-    ]
-    if len(ui_candidates) != 1:
-        raise PipelineError(
-            f"UI trace function matched {len(ui_candidates)} generated files"
-        )
-    ui_path = ui_candidates[0]
-    ui = ui_path.read_text(encoding="utf-8")
-    include = '#include "../../qpr2_ui_trace.h"\n'
-    if include not in ui:
-        anchor = '#include "recomp_funcs.h"\n'
-        if ui.count(anchor) != 1:
-            raise PipelineError("UI trace include location has drifted")
-        ui = ui.replace(anchor, anchor + include)
+    def replace_body(path: Path, match: re.Match[str], body: str) -> None:
+        if match.group() != body:
+            source = sources[path]
+            sources[path] = source[:match.start()] + body + source[match.end():]
+            modified.add(path)
+
+    def add_after(body: str, address: int, needle: str, addition: str) -> str:
+        nonlocal changed
+        replacement = needle + addition
+        if body.count(replacement) == 1:
+            return body
+        if body.count(needle) != 1:
+            raise PipelineError(f"NV2A bridge 0x{address:08X} changed shape "
+                                f"at {needle.strip()}")
         changed += 1
-    marker = "    RECOMP_PC(0x0010FEE0u);\n"
-    observed = (
-        "    qpr2_ui_trace(0, 0x0010FEE0u, 0, ecx, MEM32(esp), "
-        "MEM32(esp + 4), esp, ebx, esi, edi);\n"
-    )
-    if observed not in ui:
-        if ui.count(marker) != 1:
-            raise PipelineError("UI trace entry has drifted")
-        ui = ui.replace(marker, observed + marker)
-        changed += 1
-    for site in (0x0010F45C, 0x0010FF29, 0x0010FF55, 0x0010FF61):
-        args = f"(_icall_target, _icall_esp, 0x{site:08X}u)"
-        macros = {
-            "RECOMP_ICALL_SAFE_AT": "QPR2_UI_ICALL",
-            "RECOMP_ICALL_SAFE_AT_CC": "QPR2_UI_ICALL_CC",
-        }
-        if sum(ui.count(traced + args) for traced in macros.values()) == 1:
-            continue
-        if sum(ui.count(original + args) for original in macros) != 1:
-            raise PipelineError(f"UI trace call at 0x{site:08X} has drifted")
-        for original, traced in macros.items():
-            ui = ui.replace(original + args, traced + args)
-        changed += 1
-    ui_path.write_text(ui, encoding="utf-8")
+        return body.replace(needle, replacement)
+
+    fence = 0x00196CF0
+    path, match = find_function(fence)
+    body = add_after(match.group(), fence, "void sub_00196CF0(void)\n{\n",
+                     "    const uint32_t requested_fence = MEM32(g_esp + 4);\n")
+    body = add_after(body, fence, "    RECOMP_PC(0x00196DF4u);\n",
+                     "    if (recomp_nv2a_fence_wait(esi, requested_fence)) "
+                     "goto loc_00196E0F;\n")
+    replace_body(path, match, body)
+
+    cache_flush = ("    MEM32(eax + 0x100410) = ecx;\n",
+                   "    recomp_nv2a_cache_flush(eax + 0x100410);\n")
+    submit_edx = ("    MEM32(ecx + 0x40) = edx;\n",
+                  "    recomp_nv2a_submit(ecx + 0x40, edx);\n")
+    submit_eax = ("    MEM32(edx + 0x40) = eax;\n",
+                  "    recomp_nv2a_submit(edx + 0x40, eax);\n")
+    for address, patches in (
+        (0x00196FB0, (cache_flush, submit_edx, submit_eax)),
+        (0x001970C0, (cache_flush, submit_edx)),
+        (0x001971F0, (cache_flush,)),
+    ):
+        path, match = find_function(address)
+        body = match.group()
+        for needle, addition in patches:
+            body = add_after(body, address, needle, addition)
+        replace_body(path, match, body)
+
+    macros = {
+        "RECOMP_ICALL_SAFE_AT": "QPR2_UI_ICALL",
+        "RECOMP_ICALL_SAFE_AT_CC": "QPR2_UI_ICALL_CC",
+    }
+    for address, sites in (
+        (0x0010F440, (0x0010F45C,)),
+        (0x0010FEE0, (0x0010FF29, 0x0010FF55, 0x0010FF61)),
+    ):
+        path, match = find_function(address)
+        body = match.group()
+        if address == 0x0010FEE0:
+            marker = "    RECOMP_PC(0x0010FEE0u);\n"
+            observed = ("    qpr2_ui_trace(0, 0x0010FEE0u, 0, ecx, MEM32(esp), "
+                        "MEM32(esp + 4), esp, ebx, esi, edi);\n")
+            if observed not in body:
+                if body.count(marker) != 1:
+                    raise PipelineError("UI trace entry has drifted")
+                body = body.replace(marker, observed + marker)
+                changed += 1
+        for site in sites:
+            args = f"(_icall_target, _icall_esp, 0x{site:08X}u)"
+            if sum(body.count(traced + args) for traced in macros.values()) == 1:
+                continue
+            if sum(body.count(original + args) for original in macros) != 1:
+                raise PipelineError(f"UI trace call at 0x{site:08X} has drifted")
+            for original, traced in macros.items():
+                body = body.replace(original + args, traced + args)
+            changed += 1
+        replace_body(path, match, body)
+        include = '#include "../../qpr2_ui_trace.h"\n'
+        if include not in sources[path]:
+            anchor = '#include "recomp_funcs.h"\n'
+            if sources[path].count(anchor) != 1:
+                raise PipelineError("UI trace include location has drifted")
+            sources[path] = sources[path].replace(anchor, anchor + include)
+            modified.add(path)
+            changed += 1
+
+    for path in sorted(modified):
+        path.write_text(sources[path], encoding="utf-8")
 
     if changed:
         print(f"Applied {changed} verified generated host bridge(s)")
@@ -585,7 +612,8 @@ def verify_inputs(toolkit: Path, xbe: Path, require_xbe: bool = True) -> None:
     if not (toolkit / "tools" / "xbe_parser").is_dir():
         raise PipelineError(
             f"XboxRecomp was not found at {toolkit}. Run "
-            "'git submodule update --init --recursive'."
+            "'git submodule update --init --recursive' from a Git checkout "
+            "or 'py -3 tools/bootstrap_xboxrecomp.py' from a source ZIP."
         )
     if require_xbe and not xbe.is_file():
         raise PipelineError(

@@ -123,27 +123,81 @@ function Invoke-Qpr2Python {
 }
 
 
-function Invoke-Qpr2BuildAndRun {
-    $titleRevision = & git rev-parse HEAD
-    if ($LASTEXITCODE -ne 0) { throw "Use a Git checkout of the clean QPR2 branch." }
-    $runtimeRevision = & git rev-parse "HEAD:$runtimePath"
-    $actualRuntime = & git -C $runtimePath rev-parse HEAD
-    if ($LASTEXITCODE -ne 0 -or $actualRuntime -ne $runtimeRevision) {
-        throw "Run git submodule update --init --recursive to restore the pinned XboxRecomp runtime."
+function Get-Qpr2RuntimeSource([string]$PinnedRevision, [bool]$TitleIsArchive) {
+    $lifter = Join-Path $runtimePath "tools/recomp/__main__.py"
+    if (-not (Test-Path -LiteralPath $lifter -PathType Leaf)) {
+        if (-not $TitleIsArchive) {
+            throw "Run git submodule update --init --recursive to install XboxRecomp."
+        }
+        $bootstrapLog = Join-Path $runLogDir "bootstrap.log"
+        $exitCode = Invoke-Qpr2Python -Arguments @("tools/bootstrap_xboxrecomp.py") -LogFile $bootstrapLog
+        if ($exitCode -ne 0) { throw "XboxRecomp setup exited $exitCode. See $bootstrapLog." }
     }
+
+    if (Test-Path (Join-Path $runtimePath ".git")) {
+        $revision = & git -C $runtimePath rev-parse HEAD
+        if ($LASTEXITCODE -ne 0 -or $revision -ne $PinnedRevision) {
+            $fix = if ($TitleIsArchive) { "py -3 tools/bootstrap_xboxrecomp.py" } else { "git submodule update --init --recursive" }
+            throw "Expected XboxRecomp $PinnedRevision. Run $fix."
+        }
+        return @{ Kind = "git"; Revision = $revision; LiftIdentity = $revision }
+    }
+
+    $rendererHeader = Join-Path $runtimePath "src/kernel/nv2a_overlay_revision.h"
+    if (-not (Test-Path -LiteralPath $rendererHeader -PathType Leaf) -or
+        -not (Select-String -LiteralPath $rendererHeader -Quiet -Pattern '^#define QPR2_RENDERER_REVISION 1701u$') -or
+        -not (Select-String -LiteralPath $lifter -Quiet -SimpleMatch '--runtime-instruction-hooks')) {
+        throw "The XboxRecomp source in $runtimePath is incompatible. Use the QPR2 runtime archive for $PinnedRevision."
+    }
+
+    # A runtime ZIP has no commit ID. Use its actual lifter inputs for cache
+    # invalidation, including when a user replaces the unpacked source.
+    $directories = @("tools", "templates/runtime") | ForEach-Object { Join-Path $runtimePath $_ }
+    $inputs = Get-ChildItem -LiteralPath $directories -Recurse -File |
+        Where-Object { $_.Extension -in ".py", ".h" } |
+        Sort-Object FullName | ForEach-Object {
+            "$(Resolve-Path -LiteralPath $_.FullName -Relative) $((Get-FileHash -LiteralPath $_.FullName).Hash)"
+        }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes(($inputs -join "`n"))
+        $identity = ([System.BitConverter]::ToString($sha.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+    return @{ Kind = "archive"; Revision = $null; LiftIdentity = $identity }
+}
+
+function Invoke-Qpr2BuildAndRun {
+    $titleIsArchive = -not (Test-Path ".git")
+    $titleRevision = $null
+    if ($titleIsArchive) {
+        $runtimePin = (Get-Content "tools/xboxrecomp-pin.txt" -Raw).Trim()
+    } else {
+        $titleRevision = & git rev-parse HEAD
+        if ($LASTEXITCODE -ne 0) { throw "Could not read the QPR2 Git revision." }
+        $runtimePin = & git rev-parse "HEAD:$runtimePath"
+        if ($LASTEXITCODE -ne 0) { throw "Could not read the pinned XboxRecomp revision." }
+    }
+
     if (-not (Test-Path "game/default.xbe" -PathType Leaf)) {
         throw "Extract your matching Xbox disc into game/ so game/default.xbe is present."
     }
 
     $xbeHash = (Get-FileHash "game/default.xbe" -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($xbeHash -ne $runtimeSettings.XbeSha256) { throw "Unexpected default.xbe SHA-256 $xbeHash. See docs/KNOWN_BUILD.md." }
+    $runtime = Get-Qpr2RuntimeSource -PinnedRevision $runtimePin -TitleIsArchive $titleIsArchive
     $manifest = [ordered]@{
         schema_version = 1
         run_id = $runId
         started_utc = [DateTime]::UtcNow.ToString("o")
         mode = $Mode
+        title_source = if ($titleIsArchive) { "archive" } else { "git" }
         title_revision = $titleRevision
-        runtime_revision = $runtimeRevision
+        runtime_source = $runtime.Kind
+        runtime_revision = $runtime.Revision
+        runtime_pin = $runtimePin
+        runtime_lift_identity = $runtime.LiftIdentity
         xbe_sha256 = $xbeHash
         configuration = "Release"
         guest_pc_tracking = ($Mode -eq "Debug")
@@ -153,7 +207,7 @@ function Invoke-Qpr2BuildAndRun {
     $manifestPath = Join-Path $runLogDir "run.json"
     $manifest | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 $manifestPath
     $pipelineHash = (Get-FileHash "tools/qpr2_pipeline.py" -Algorithm SHA256).Hash
-    $liftKey = "$runtimeRevision/$xbeHash/$pipelineHash"
+    $liftKey = "$($runtime.LiftIdentity)/$xbeHash/$pipelineHash"
     $liftStamp = "analysis/clean-v1-lift.txt"
     $lifted = (Test-Path $liftStamp) -and ((Get-Content $liftStamp -Raw).Trim() -eq $liftKey) -and
         (Test-Path "src/generated/qpr2_build_config.h") -and

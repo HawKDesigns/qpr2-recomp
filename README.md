@@ -54,6 +54,12 @@ git pull --ff-only
 git submodule update --init --recursive
 ```
 
+GitHub's source ZIP contains the QPR2 project. The launcher installs the
+pinned XboxRecomp runtime into `third_party/xboxrecomp` when that folder is
+empty and Git is available. You can also extract the pinned runtime source
+there yourself. The runtime pin is in [tools/xboxrecomp-pin.txt](tools/xboxrecomp-pin.txt).
+An existing compatible runtime source folder is reused.
+
 Extract your disc into `game/`. The launcher checks the XBE fingerprint and
 regenerates local analysis and translated C on the first build or when the
 runtime or lift pipeline changes. Run `py -3 tools/qpr2_pipeline.py doctor`
