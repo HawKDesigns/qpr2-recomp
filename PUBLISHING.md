@@ -64,15 +64,14 @@ extractor commands are required.
    fallback. The second run should report all three `[SHADER-STATUS]`
    entries as `ready`.
 
-This is a one-time learning pass per matching game build. If you have old
-normal stderr logs from before this launcher update, the next launch scans
-them before building, so it can skip the learning pass. If a class has not
+This is a one-time learning pass per matching game build. If you have v126 stderr logs, pass them to the extractor below to reuse
+their material observations before the first clean v1 build. If a class has not
 appeared yet, keep playing normally; the launcher reports how many variants
 it still needs. For advanced diagnosis, the extractor still accepts logs or
 F8 `.bin` files manually:
 
 ```powershell
-py -3 tools/extract_qpr2_literal_programs.py ".\\logs\\v126-run-...\\one-hundred-twenty-sixth-run.stderr.log"
+py -3 tools/extract_qpr2_literal_programs.py "logs/clean-v1-.../run.stderr.log"
 py -3 tools/generate_qpr2_literal_materials.py
 ```
 

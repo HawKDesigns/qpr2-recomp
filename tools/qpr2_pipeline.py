@@ -103,10 +103,9 @@ KNOWN_RUNTIME_PATCHES = {
     ),
 }
 
-# These entry points have recovered host implementations. A fresh lift still
-# emits empty return stubs for direct calls, which corrupts title state.
+# These recovered entry points handle direct as well as indirect calls.
 # Addresses are valid only for this verified retail executable.
-KNOWN_RECOVERED_STUBS = {
+KNOWN_DIRECT_OVERRIDES = {
     "5e9788296601bae4401e31ae1f5e25a8a732cb0bd0588576182d3aa69f859383": (
         0x00027E00, 0x00037F90, 0x0003D060, 0x00043BE0, 0x00044010,
         0x00045060, 0x00045510, 0x0006B950, 0x0007F9F0, 0x0007FEF0,
@@ -433,34 +432,27 @@ def apply_known_runtime_patches(generated_dir: Path, xbe_sha256: str) -> int:
 
 
 
+def write_manual_entry_points(output_dir: Path, manifest: Path, digest: str) -> None:
+    """Give the lifter stable names for the title's direct-call overrides."""
+    entries = {f"{address:08X}": f"sub_{address:08X}"
+               for address in KNOWN_DIRECT_OVERRIDES.get(digest, ())}
+    manifest.write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8")
+    wrappers = ['#include "recomp_funcs.h"', '']
+    for address, name in entries.items():
+        handler = f"qpr2_recovered_{address}"
+        wrappers.extend((f"void {handler}(void);",
+                         f"void {name}(void) {{ {handler}(); }}"))
+    (output_dir / "qpr2_manual_entries.c").write_text(
+        "\n".join(wrappers) + "\n", encoding="utf-8")
+
+
 def apply_known_generated_bridges(generated_dir: Path, xbe_sha256: str) -> int:
     """Restore verified host bridges after each clean lift of the retail XBE."""
-    addresses = KNOWN_RECOVERED_STUBS.get(xbe_sha256, ())
+    addresses = KNOWN_DIRECT_OVERRIDES.get(xbe_sha256, ())
     if not addresses:
         return 0
 
     changed = 0
-    stubs_path = generated_dir / "recomp_stubs_unresolved.c"
-    if not stubs_path.is_file():
-        raise PipelineError(f"recovered call stubs missing: {stubs_path}")
-    stubs = stubs_path.read_text(encoding="utf-8")
-    for address in addresses:
-        name = f"{address:08X}"
-        empty = (f"void sub_{name}(void) {{ g_esp += 4; "
-                 f"/* 0x{name}: not detected */ }}")
-        wrapper = (f"extern void qpr2_recovered_{name}(void);\n"
-                   f"void sub_{name}(void) {{ qpr2_recovered_{name}(); }}")
-        if stubs.count(wrapper) == 1:
-            continue
-        if stubs.count(empty) != 1:
-            raise PipelineError(
-                f"recovered call 0x{name} did not match its empty stub; "
-                "inspect generated code and the linked host implementation"
-            )
-        stubs = stubs.replace(empty, wrapper)
-        changed += 1
-    stubs_path.write_text(stubs, encoding="utf-8")
-
     header_path = generated_dir / "recomp_types.h"
     if not header_path.is_file():
         raise PipelineError(f"generated bridge declarations missing: {header_path}")
@@ -570,15 +562,17 @@ def apply_known_generated_bridges(generated_dir: Path, xbe_sha256: str) -> int:
         ui = ui.replace(marker, observed + marker)
         changed += 1
     for site in (0x0010F45C, 0x0010FF29, 0x0010FF55, 0x0010FF61):
-        original = (
-            f"RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x{site:08X}u)"
-        )
-        traced = f"QPR2_UI_ICALL(_icall_target, _icall_esp, 0x{site:08X}u)"
-        if traced in ui:
+        args = f"(_icall_target, _icall_esp, 0x{site:08X}u)"
+        macros = {
+            "RECOMP_ICALL_SAFE_AT": "QPR2_UI_ICALL",
+            "RECOMP_ICALL_SAFE_AT_CC": "QPR2_UI_ICALL_CC",
+        }
+        if sum(ui.count(traced + args) for traced in macros.values()) == 1:
             continue
-        if ui.count(original) != 1:
+        if sum(ui.count(original + args) for original in macros) != 1:
             raise PipelineError(f"UI trace call at 0x{site:08X} has drifted")
-        ui = ui.replace(original, traced)
+        for original, traced in macros.items():
+            ui = ui.replace(original + args, traced + args)
         changed += 1
     ui_path.write_text(ui, encoding="utf-8")
 
@@ -693,10 +687,16 @@ def lift(toolkit: Path, xbe: Path, allow_unknown: bool, split: int) -> None:
         abi,
         "-v",
     )
+    manual_manifest = recomp / "manual-functions.json"
+    write_manual_entry_points(GENERATED_C, manual_manifest, digest)
     run_module(
         toolkit,
         "tools.recomp",
         xbe,
+        "--runtime-instruction-hooks",
+        "--track-guest-pc",
+        "--manual-functions",
+        manual_manifest,
         "--game-name",
         "ATV Quad Power Racing 2",
         "--all",

@@ -6,29 +6,23 @@ An experimental native Windows recompilation of the original Xbox version of
 from your own copy. The project does not distribute retail executable or asset
 files.
 
-## Current status (diagnostic overlay v126)
+## Clean v1 on XboxRecomp v0.17.0
 
-The matching North American retail XBE has been analyzed and lifted: 8,792
-functions translated, with no failed functions in the initial lift. Windows
-diagnostic builds boot into menus, play the intro, and run races. The v126 test
-built and ran successfully. Its preview and race performance returned to the
-pre-v125 range, but **sustained 30 FPS in races has not been achieved**. Frame
-rate still varies considerably with the scene and nearby AI racers. Some
-vehicle/rider sound effects and mounted rider/ATV shadows remain incomplete.
+This branch ports the working v126 QPR2 runtime onto upstream XboxRecomp
+v0.17.0. It keeps the v126 native D3D11 ROV renderer, raw GPU geometry,
+ordered FIFO completion, XMV clock and recovered title callbacks. The retail
+boot-to-race path and performance parity still need Windows hardware tests.
 
-| Area | Status |
-| --- | --- |
-| Input and menus | Working for the current test path |
-| Race and game simulation | Playable in diagnostic builds; performance work ongoing |
-| Rendering | GPU raster/geometry paths with CPU fallbacks; output checks at startup |
-| Audio | Mostly working; some effects still incorrect or absent |
-| Race frame rate | Variable; the stable 30 FPS goal is open |
+| Reference | QPR2 | XboxRecomp |
+| --- | --- | --- |
+| Last tested v126 | `0f55e19f3e04d7d7587920f2d6a34618db48ee51` | `92a5f030d0e9442d35e7fdfb8cb86344716c677f` |
+| v126 source with dependency attribution | `b32020286812c2c9336a550b83b1f0dcc4f18d5f` | `f39fdf00ab65ffb1f6c3ccc18280885f1a5e6f09` |
 
-The renderer has conservative draw rejection, translated mesh reuse, shader
-caching, GPU target handling, and profiling. These are **not** full AI vehicle
-instancing, object occlusion culling, GPU particle simulation, or frame-rate
-interpolation. See `tools/v126-feature-audit.md` for a more
-specific implementation audit.
+The v126 build reached menus and completed races. About 15 FPS at the Dunes1
+countdown is the historical check. Compare against a fresh v126 run on the
+same machine for race pacing. Mounted-racer shadows and some audio effects
+were already incomplete in v126. See the [renderer audit](tools/v126-feature-audit.md)
+and [migration notes](docs/CLEAN_V1.md).
 
 ## Requirements
 
@@ -47,8 +41,8 @@ SHA-256 before using build-specific overrides.
 ## Set up the source and game files
 
 ```powershell
-git clone --recurse-submodules https://github.com/HawKDesigns/qpr2-recomp.git
-cd qpr2-recomp
+git clone --branch clean-v1-v017 --recurse-submodules https://github.com/HawKDesigns/qpr2-recomp.git qpr2-clean-v1
+cd qpr2-clean-v1
 py -3 -m pip install capstone
 ```
 
@@ -60,22 +54,11 @@ git pull --ff-only
 git submodule update --init --recursive
 ```
 
-If you downloaded ZIPs instead, use the fork's
-`qpr2-v126` branch for `third_party/xboxrecomp/`; its default `main`
-is the upstream v0.16 code. Keep your local generated shader files when
-refreshing that folder.
-
-Extract your disc into `game/`. The recompilation pipeline creates local files
-in `analysis/`, `src/generated/`, and `src/recomp/gen/`; these are derived from
-the supplied executable and are not checked in. If setting up from a fresh
-source checkout rather than continuing an existing diagnostic installation,
-run the pipeline before building:
-
-```powershell
-py -3 tools/qpr2_pipeline.py doctor
-py -3 tools/qpr2_pipeline.py analyze
-py -3 tools/qpr2_pipeline.py all
-```
+Extract your disc into `game/`. The launcher checks the XBE fingerprint and
+regenerates local analysis and translated C on the first build or when the
+runtime or lift pipeline changes. Run `py -3 tools/qpr2_pipeline.py doctor`
+to check the toolchain and inputs. Run `py -3 tools/qpr2_pipeline.py all`
+to exercise the lift independently.
 
 The pipeline examines all code-bearing XBE sections, not only `.text`. Do not
 commit or share `game/`, generated translations, saves, memory dumps, or other
@@ -112,37 +95,32 @@ building, `[SHADER-EMBED]` verifies the GPU shader against the original v126
 source. The capture fixture and generated shader files stay local.
 See [PUBLISHING.md](PUBLISHING.md) for validation and troubleshooting.
 
-## Run the current diagnostic build
-
-The repository contains the cumulative v126 source. Clone with submodules,
-prepare the game files from your own disc as described above, and run from the
-repository root:
+## Run clean v1
 
 ```powershell
 .\rebuild-and-run.ps1
+.\rebuild-and-run.ps1 -Mode Benchmark
+.\rebuild-and-run.ps1 -Mode Debug
 ```
 
-The launcher configures a separate `build-diagnostic-v126/`, builds Release,
-starts the game, and writes per-run logs and `logs/qpr2-v126-results.zip` after
-the run. It leaves previous run directories in `logs/` for comparison. If a
-build fails, send the configure/build log and exit code from the new run
-directory. For a performance run, include the results ZIP and say when you
-were behind, alongside, or ahead of AI racers; scene differences matter.
+Play mode starts an optimized Release build with ordinary logging and no
+launcher timeout. Benchmark mode enables the existing phase and GPU timing
+counters and defaults to a six-minute timeout. Debug mode adds guest PC
+tracking and additional diagnostics in a separate Release build tree.
+Use `-TimeoutSeconds` to extend a diagnostic run or `-BuildOnly` to stop
+after the build.
 
-The launcher normally enables the native GPU raster and GPU geometry paths.
-No extra `RECOMP_GPU_NATIVE=1` setting is required for its default run. For a
-same-build comparison of v126's point-bounds optimization, set this **before**
-launching and remove it afterward:
+Each attempt writes logs and a `run.json` manifest under
+`logs/clean-v1-*/`. A completed run also creates a time-stamped results ZIP.
+For a clean performance comparison, use the same Dunes1 setup and note where
+you drove with visible AI and where the track ahead was clear. Keep F8 capture
+and other verbose diagnostics outside measured intervals.
 
-```powershell
-$env:RECOMP_GPU_POINT_V126 = "0"
-.\rebuild-and-run.ps1
-Remove-Item Env:RECOMP_GPU_POINT_V126
-```
-
-That switch changes one optimization, not the complete renderer. Avoid
-enabling optional frame, vertex, texture, audio, or verbose render captures
-when comparing FPS: their synchronous output can affect frame time.
+The launcher requests native ROV and raw GPU geometry. Confirm what the
+runtime actually admitted in the logs. Runtime defaults are in
+`tools/qpr2_runtime.psd1` and can be overridden before launch. For example,
+`RECOMP_GPU_POINT_BOUNDS=0` restores the prior AABB decision for a same-build
+comparison.
 
 ## Shader cache and generated files
 

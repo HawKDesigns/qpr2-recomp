@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DESTINATION = ROOT / "third_party" / "xboxrecomp"
 REPOSITORY = "https://github.com/HawKDesigns/xboxrecomp.git"
-COMMIT = "4346485f876b30d5af9567e5d3fa64b2575c7aa4"
+COMMIT = "fb0c90697620e19d5adad78d028d594a642e0fb3"
 
 
 def run(*args: str, cwd: Path | None = None) -> None:

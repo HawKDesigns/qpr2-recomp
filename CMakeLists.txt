@@ -82,9 +82,16 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     "${XBOXRECOMP_DIR}/include"
 )
 
+option(QPR2_TRACK_GUEST_PC "Record lifted guest block addresses for debugging" OFF)
+if(QPR2_TRACK_GUEST_PC)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE RECOMP_ENABLE_GUEST_PC=1)
+endif()
+
 if(MSVC)
     target_compile_options(${PROJECT_NAME} PRIVATE /bigobj /W4)
     target_compile_definitions(${PROJECT_NAME} PRIVATE _CRT_SECURE_NO_WARNINGS)
-    target_link_options(${PROJECT_NAME} PRIVATE /LARGEADDRESSAWARE)
+    target_compile_options(${PROJECT_NAME} PRIVATE $<$<CONFIG:Release>:/Zi>)
+    target_link_options(${PROJECT_NAME} PRIVATE /LARGEADDRESSAWARE
+        "$<$<CONFIG:Release>:/DEBUG:FULL;/OPT:REF;/OPT:ICF>")
 endif()
 

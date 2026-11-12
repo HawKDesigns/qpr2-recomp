@@ -33,7 +33,7 @@ with tempfile.TemporaryDirectory(prefix='qpr2-audio-limit-') as d:
  run(flags+[p/'limit.c','-lm','-o',p/'limit']);run([p/'limit'])
  run(flags+[root/'tools/test_qpr2_audio_output.c',p/'apu_dsp.o',src/'platform/win32_compat.c','-Wl,--gc-sections','-lm','-lpthread','-o',p/'output']);run([p/'output'],env=dict(os.environ,RECOMP_AUDIO_LIMITER='1'));run([p/'output'],env=dict(os.environ,RECOMP_AUDIO_LIMITER='0'))
  run(flags+[root/'third_party/xboxrecomp/tests/apu_mixdown/test_main.c',p/'apu_dsp.o',p/'apu_core.o','-Wl,--gc-sections','-lm','-o',p/'mixdown'])
- for enabled in ['0','1']:run([p/'mixdown'],env=dict(os.environ,RECOMP_APU_MIXDOWN_ALL=enabled,APU_MIXDOWN_EXPECT=enabled))
+ for enabled in ['0','1']:run([p/'mixdown'],env=dict(os.environ,RECOMP_APU_MIXDOWN_ALL=enabled,RECOMP_TEST_MIXDOWN_EXPECT=enabled))
  for name,export in [('apu_vp','vp'),('apu_dsp','dsp')]:
   run(flags+['-Dmcpx_apu_'+export+'_state_layout=qpr2_test_'+export+'_layout','-c',src/'apu'/f'{name}.c','-o',p/f'{name}-layout.o'])
  run(flags+[root/'tools/test_qpr2_apu_layout.c',p/'apu_core.o',p/'apu_vp-layout.o',p/'apu_dsp-layout.o','-Wl,--gc-sections','-lm','-o',p/'layout']);run([p/'layout'])

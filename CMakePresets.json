@@ -1,12 +1,12 @@
 {
-  "version": 6,
+  "version": 3,
   "configurePresets": [
     {
       "name": "windows-release",
       "displayName": "Windows x64 Release",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
-      "binaryDir": "${sourceDir}/build"
+      "binaryDir": "${sourceDir}/build-clean-v1"
     }
   ],
   "buildPresets": [

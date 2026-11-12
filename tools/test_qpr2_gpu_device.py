@@ -331,24 +331,21 @@ fixture=r'''
 #undef NV_GPU_COMPACT_MATERIALS
 #undef NV_GPU_LITERAL_CLASS
 #define NV_GPU_LITERAL_CLASS 1
-#define gpu_rc_literal mock_literal_eval_1
-#include "nv2a_gpu_literal.inc"
+#define gpu_rc_literal gpu_rc_eval
 #define gpu_source_color mock_literal_source_1
 #include "nv2a_gpu_source.inc"
 #undef gpu_source_color
 #undef gpu_rc_literal
 #undef NV_GPU_LITERAL_CLASS
 #define NV_GPU_LITERAL_CLASS 2
-#define gpu_rc_literal mock_literal_eval_2
-#include "nv2a_gpu_literal.inc"
+#define gpu_rc_literal gpu_rc_eval
 #define gpu_source_color mock_literal_source_2
 #include "nv2a_gpu_source.inc"
 #undef gpu_source_color
 #undef gpu_rc_literal
 #undef NV_GPU_LITERAL_CLASS
 #define NV_GPU_LITERAL_CLASS 3
-#define gpu_rc_literal mock_literal_eval_3
-#include "nv2a_gpu_literal.inc"
+#define gpu_rc_literal gpu_rc_eval
 #define gpu_source_color mock_literal_source_3
 #include "nv2a_gpu_source.inc"
 #undef gpu_source_color

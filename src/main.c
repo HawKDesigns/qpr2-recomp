@@ -186,12 +186,12 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
     fprintf(stderr, "[LOG-POLICY] buffered=%d capacity=65536 periodic_flush=renderer-report\n", log_buffered);
 
     printf("=== ATV: Quad Power Racing 2 recomp bring-up ===\n");
-    printf("[BOOT] diagnostic overlay v126 (fresh build + verified dispatcher/renderer)\n");
+    printf("[BOOT] QPR2 clean v1 on XboxRecomp v0.17.0\n");
     unsigned renderer_revision = nv2a_pb_exec_overlay_revision();
-    fprintf(stderr, "[OVERLAY-CHECK] renderer=v%u float_depth=1 swizzled_targets=1 texture_sizes=1\n",
+    fprintf(stderr, "[RUNTIME-CHECK] renderer_abi=%u float_depth=1 swizzled_targets=1 texture_sizes=1\n",
             renderer_revision);
     if (renderer_revision != QPR2_RENDERER_REVISION || !qpr2_validate_level_callbacks()) {
-        fprintf(stderr, "[BOOT] Overlay verification failed; stopping before guest startup.\n");
+        fprintf(stderr, "[BOOT] Renderer or callback verification failed; stopping before guest startup.\n");
         return 4;
     }
     printf("Title ID: %s | entry: 0x%08X | XBE SHA-256: %s\n",

@@ -2,6 +2,11 @@
 #include <assert.h>
 static int test_active = 1, test_calls;
 static int16_t received[256][2];
+void apu_wav_write(const int16_t *pcm, int frames) { (void)pcm; (void)frames; }
+int xa2_queued_samples(void) { return 0; }
+uint64_t xa2_samples_played(void) { return 0; }
+unsigned xa2_underruns(void) { return 0; }
+int xa2_get_buffer_size(void) { return 1024; }
 int xa2_is_active(void) { return test_active; }
 int xa2_submit_samples(const int16_t *samples, int count)
 {
@@ -13,6 +18,9 @@ int main(void)
 {
     MCPXAPUState *d = calloc(1, sizeof(*d));
     assert(d);
+    const char *setting = getenv("RECOMP_AUDIO_LIMITER");
+    d->monitor.limit_enabled = !setting || atoi(setting) != 0;
+    d->monitor.limiter.gain = 1.0f;
     /* Emulate the eight consecutive 32-sample DSP slices. */
     for (int frame = 0; frame < 8; ++frame) {
         d->ep_frame_div = frame;
@@ -50,8 +58,7 @@ int main(void)
     for(int f=0;f<8;f++) {
         d->ep_frame_div=f;mcpx_apu_dsp_frame(d,bins);mcpx_apu_monitor_frame(d);
     }
-    const char *setting=getenv("RECOMP_AUDIO_LIMITER");
-    if(!setting || atoi(setting)!=0) {
+    if (d->monitor.limit_enabled) {
         assert(received[0][0]>=32759 && received[0][0]<=32760);
         assert(received[0][1]==-16380);
     } else assert(received[0][0]==32767 && received[0][1]==-32768);

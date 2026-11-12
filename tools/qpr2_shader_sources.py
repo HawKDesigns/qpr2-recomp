@@ -3,10 +3,16 @@ from pathlib import Path
 import ast,re
 SHADERS=[('nv2a_gpu_raster.hlsl','nv_gpu_shader_source'),('nv2a_gpu_rov.hlsl','nv_gpu_rov_source'),('nv2a_gpu_report_reset.hlsl','nv_gpu_report_reset_source'),('nv2a_gpu_coverage.hlsl','nv_gpu_coverage_source'),('nv2a_gpu_clear.hlsl','nv_gpu_clear_source'),('nv2a_gpu_geometry.hlsl','nv_gpu_geometry_source'),('nv2a_gpu_texcopy.hlsl','nv_gpu_texcopy_source')]
 INCLUDES=['nv2a_gpu_types.h','nv2a_gpu_pixel.inc','nv2a_gpu_literal.inc','nv2a_gpu_compact.inc','nv2a_gpu_shade.inc','nv2a_gpu_source.inc','nv2a_gpu_raw_types.h','nv2a_gpu_vsh.inc','nv2a_gpu_prepare.inc']
-def expand_shader(root,name):
- source=(Path(root)/name).read_text()
- for include in INCLUDES:source=source.replace('#include "'+include+'"',(Path(root)/include).read_text())
- return source
+def expand_shader(root, name):
+    root = Path(root)
+    source = (root / name).read_text()
+    for include in INCLUDES:
+        path = root / include
+        if include == "nv2a_gpu_literal.inc" and not path.is_file():
+            path = root / "nv2a_gpu_literal_fallback.inc"
+        source = source.replace(f'#include "{include}"', path.read_text())
+    return source
+
 
 def parse_embedded(text):
  result={}

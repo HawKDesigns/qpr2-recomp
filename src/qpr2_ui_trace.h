@@ -34,14 +34,18 @@ void qpr2_loader_trace(uint32_t phase, uint32_t site, uint32_t target,
 
 /* Observe UI virtual-call boundaries. saved_esp is the expected caller
  * stack after callee cleanup. Do not repair or suppress an invalid call. */
-#define QPR2_UI_ICALL(target, saved_esp, site) do { \
+#define QPR2_UI_ICALL_TRACE(dispatch, target, saved_esp, site) do { \
     uint32_t _ui_target = (target), _ui_esp = (saved_esp); \
     uint32_t _ui_b = g_ebx, _ui_s = g_esi, _ui_d = g_edi; \
     uint32_t _ui_object = g_ecx, _ui_arg = MEM32(g_esp + 4); \
     qpr2_ui_trace(1, (site), _ui_target, _ui_object, 0, _ui_arg, \
                   _ui_esp, _ui_b, _ui_s, _ui_d); \
-    RECOMP_ICALL_SAFE_AT(_ui_target, _ui_esp, (site)); \
+    dispatch(_ui_target, _ui_esp, (site)); \
     qpr2_ui_trace(2, (site), _ui_target, _ui_object, 0, _ui_arg, \
                   _ui_esp, _ui_b, _ui_s, _ui_d); \
 } while (0)
+#define QPR2_UI_ICALL(target, saved_esp, site) \
+    QPR2_UI_ICALL_TRACE(RECOMP_ICALL_SAFE_AT, target, saved_esp, site)
+#define QPR2_UI_ICALL_CC(target, saved_esp, site) \
+    QPR2_UI_ICALL_TRACE(RECOMP_ICALL_SAFE_AT_CC, target, saved_esp, site)
 #endif

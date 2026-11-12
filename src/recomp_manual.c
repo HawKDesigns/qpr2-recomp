@@ -126,194 +126,37 @@ void qpr2_mesh_args_dump(void)
  * during device setup and vertical-status bookkeeping. */
 static uint8_t g_qpr2_io_port_80c0;
 
-extern void qpr2_recovered_00128880(void);
-extern void qpr2_recovered_00087CC0(void);
-
-extern void qpr2_recovered_001A7D43(void);
-extern void qpr2_recovered_0003FD60(void);
-extern void qpr2_recovered_0004EC80(void);
-extern void qpr2_recovered_0004FDD0(void);
-extern void qpr2_recovered_00050010(void);
-extern void qpr2_recovered_000A4070(void);
-extern void qpr2_recovered_000A4DE0(void);
-extern void qpr2_recovered_000EA920(void);
-
-extern void qpr2_recovered_00013320(void);
-extern void qpr2_recovered_000137B0(void);
-extern void qpr2_recovered_00011AC0(void);
-extern void qpr2_recovered_000112F0(void);
-extern void qpr2_recovered_00012B50(void);
-
-extern void qpr2_recovered_00038870(void);
-extern void qpr2_recovered_00037F90(void);
-extern void qpr2_recovered_000BAC20(void);
-
-extern void qpr2_recovered_000D0100(void);
-extern void qpr2_recovered_000D0790(void);
-extern void qpr2_recovered_00023060(void);
-extern void qpr2_recovered_000A6E00(void);
-extern void qpr2_recovered_00085820(void);
-extern void qpr2_recovered_000836A0(void);
-extern void qpr2_recovered_00027E00(void);
-extern void qpr2_recovered_00084440(void);
-
-extern void qpr2_recovered_0001BA10(void);
-extern void qpr2_recovered_000241D0(void);
-extern void qpr2_recovered_00028F60(void);
-extern void qpr2_recovered_00070C30(void);
-extern void qpr2_recovered_00070D60(void);
-extern void qpr2_recovered_00082E40(void);
-extern void qpr2_recovered_000A9050(void);
-extern void qpr2_recovered_0009E240(void);
-
-extern void qpr2_recovered_000FD970(void);
-extern void qpr2_recovered_00083560(void);
-extern void qpr2_recovered_000D0600(void);
-extern void qpr2_recovered_000D0B80(void);
-extern void qpr2_recovered_0006F5F0(void);
-extern void qpr2_recovered_0010D020(void);
-extern void qpr2_recovered_00115F30(void);
-extern void qpr2_recovered_0010E930(void);
-extern void qpr2_recovered_0010DF60(void);
-extern void qpr2_recovered_001284F0(void);
-extern void qpr2_recovered_0007F390(void);
-extern void qpr2_recovered_000A6B00(void);
-extern void qpr2_recovered_000C50F0(void);
-extern void qpr2_recovered_000C96B0(void);
-
-extern void qpr2_recovered_00044010(void);
-extern void qpr2_recovered_0003D060(void);
-extern void qpr2_recovered_00043BE0(void);
-extern void qpr2_recovered_00045060(void);
-extern void qpr2_recovered_0006B950(void);
-extern void qpr2_recovered_00045510(void);
-extern void qpr2_recovered_00020600(void);
-extern void qpr2_recovered_00028740(void);
-extern void qpr2_recovered_00029340(void);
-extern void qpr2_recovered_0002EBA0(void);
-extern void qpr2_recovered_000E0220(void);
-extern void qpr2_recovered_000DA770(void);
-extern void qpr2_recovered_00085680(void);
-extern void qpr2_recovered_000C3310(void);
-extern void qpr2_recovered_000C47A0(void);
-extern void qpr2_recovered_000C3AF0(void);
-extern void qpr2_recovered_000C2DD0(void);
-extern void qpr2_recovered_000C6140(void);
-extern void qpr2_recovered_000C0860(void);
-
-extern void qpr2_recovered_0007FEF0(void);
-extern void qpr2_recovered_0007F9F0(void);
-extern void qpr2_recovered_00119360(void);
+#define QPR2_CALLBACK(address, level) extern void qpr2_recovered_##address(void);
+#include "qpr2_callbacks.def"
+#undef QPR2_CALLBACK
 
 recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
 {
-    if (xbox_va == 0x0007FEF0u) return qpr2_recovered_0007FEF0;
-    if (xbox_va == 0x0007F9F0u) return qpr2_recovered_0007F9F0;
-    if (xbox_va == 0x00119360u) return qpr2_recovered_00119360;
-    if (xbox_va == 0x00044010u) return qpr2_recovered_00044010;
-    if (xbox_va == 0x0003D060u) return qpr2_recovered_0003D060;
-    if (xbox_va == 0x00043BE0u) return qpr2_recovered_00043BE0;
-    if (xbox_va == 0x00045060u) return qpr2_recovered_00045060;
-    if (xbox_va == 0x0006B950u) return qpr2_recovered_0006B950;
-    if (xbox_va == 0x00045510u) return qpr2_recovered_00045510;
-    if (xbox_va == 0x00020600u) return qpr2_recovered_00020600;
-    if (xbox_va == 0x00028740u) return qpr2_recovered_00028740;
-    if (xbox_va == 0x00029340u) return qpr2_recovered_00029340;
-    if (xbox_va == 0x0002EBA0u) return qpr2_recovered_0002EBA0;
-    if (xbox_va == 0x000E0220u) return qpr2_recovered_000E0220;
-    if (xbox_va == 0x000DA770u) return qpr2_recovered_000DA770;
-    if (xbox_va == 0x00085680u) return qpr2_recovered_00085680;
-    if (xbox_va == 0x000C3310u) return qpr2_recovered_000C3310;
-    if (xbox_va == 0x000C47A0u) return qpr2_recovered_000C47A0;
-    if (xbox_va == 0x000C3AF0u) return qpr2_recovered_000C3AF0;
-    if (xbox_va == 0x000C2DD0u) return qpr2_recovered_000C2DD0;
-    if (xbox_va == 0x000C6140u) return qpr2_recovered_000C6140;
-    if (xbox_va == 0x000C0860u) return qpr2_recovered_000C0860;
-    if (xbox_va == 0x000FD970u) return qpr2_recovered_000FD970;
-    if (xbox_va == 0x00083560u) return qpr2_recovered_00083560;
-    if (xbox_va == 0x000D0600u) return qpr2_recovered_000D0600;
-    if (xbox_va == 0x000D0B80u) return qpr2_recovered_000D0B80;
-    if (xbox_va == 0x0006F5F0u) return qpr2_recovered_0006F5F0;
-    if (xbox_va == 0x0010D020u) return qpr2_recovered_0010D020;
-    if (xbox_va == 0x00115F30u) return qpr2_recovered_00115F30;
-    if (xbox_va == 0x0010E930u) return qpr2_recovered_0010E930;
-    if (xbox_va == 0x0010DF60u) return qpr2_recovered_0010DF60;
-    if (xbox_va == 0x001284F0u) return qpr2_recovered_001284F0;
-    if (xbox_va == 0x0007F390u) return qpr2_recovered_0007F390;
-    if (xbox_va == 0x000A6B00u) return qpr2_recovered_000A6B00;
-    if (xbox_va == 0x000C50F0u) return qpr2_recovered_000C50F0;
-    if (xbox_va == 0x000C96B0u) return qpr2_recovered_000C96B0;
-    if (xbox_va == 0x0001BA10u) return qpr2_recovered_0001BA10;
-    if (xbox_va == 0x000241D0u) return qpr2_recovered_000241D0;
-    if (xbox_va == 0x00028F60u) return qpr2_recovered_00028F60;
-    if (xbox_va == 0x00070C30u) return qpr2_recovered_00070C30;
-    if (xbox_va == 0x00070D60u) return qpr2_recovered_00070D60;
-    if (xbox_va == 0x00082E40u) return qpr2_recovered_00082E40;
-    if (xbox_va == 0x000A9050u) return qpr2_recovered_000A9050;
-    if (xbox_va == 0x0009E240u) return qpr2_recovered_0009E240;
-    if (xbox_va == 0x00027E00u) return qpr2_recovered_00027E00;
-    if (xbox_va == 0x00084440u) return qpr2_recovered_00084440;
-    if (xbox_va == 0x000D0100u) return qpr2_recovered_000D0100;
-    if (xbox_va == 0x000D0790u) return qpr2_recovered_000D0790;
-    if (xbox_va == 0x00023060u) return qpr2_recovered_00023060;
-    if (xbox_va == 0x000A6E00u) return qpr2_recovered_000A6E00;
-    if (xbox_va == 0x00085820u) return qpr2_recovered_00085820;
-    if (xbox_va == 0x000836A0u) return qpr2_recovered_000836A0;
-    if (xbox_va == 0x000BAC20u) return qpr2_recovered_000BAC20;
-    if (xbox_va == 0x00037F90u) return qpr2_recovered_00037F90;
-    if (xbox_va == 0x00038870u) return qpr2_recovered_00038870;
-    if (xbox_va == 0x00128880u) return qpr2_recovered_00128880;
-    if (xbox_va == 0x00087CC0u) return qpr2_recovered_00087CC0;
-    if (xbox_va == 0x001A7D43u) return qpr2_recovered_001A7D43;
-    if (xbox_va == 0x0003FD60u) return qpr2_recovered_0003FD60;
-    if (xbox_va == 0x0004EC80u) return qpr2_recovered_0004EC80;
-    if (xbox_va == 0x0004FDD0u) return qpr2_recovered_0004FDD0;
-    if (xbox_va == 0x00050010u) return qpr2_recovered_00050010;
-    if (xbox_va == 0x000A4070u) return qpr2_recovered_000A4070;
-    if (xbox_va == 0x000A4DE0u) return qpr2_recovered_000A4DE0;
-    if (xbox_va == 0x000EA920u) return qpr2_recovered_000EA920;
-    if (xbox_va == 0x00013320u) return qpr2_recovered_00013320;
-    if (xbox_va == 0x000137B0u) return qpr2_recovered_000137B0;
-    if (xbox_va == 0x00011AC0u) return qpr2_recovered_00011AC0;
-    if (xbox_va == 0x000112F0u) return qpr2_recovered_000112F0;
-    if (xbox_va == 0x00012B50u) return qpr2_recovered_00012B50;
-    (void)xbox_va;
-    return (recomp_func_t)0;
+    switch (xbox_va) {
+#define QPR2_CALLBACK(address, level) case 0x##address##u: return qpr2_recovered_##address;
+#include "qpr2_callbacks.def"
+#undef QPR2_CALLBACK
+    default: return NULL;
+    }
 }
 
-/* Link and startup checks prevent an updated executable from silently using
- * an older cached dispatcher. Checking pointers executes no guest routine. */
 int qpr2_validate_level_callbacks(void)
 {
-    static const uint32_t addresses[] = {
-        0x0007F9F0, 0x0007FEF0, 0x00119360,
-        0x00044010, 0x0003D060, 0x00043BE0, 0x00045060, 0x0006B950, 0x00045510,
-        0x00020600, 0x00028740, 0x00029340,
-        0x0002EBA0,
-        0x000E0220, 0x000DA770, 0x00085680, 0x000C3310, 0x000C47A0, 0x000C3AF0, 0x000C2DD0, 0x000C6140, 0x000C0860,
-        0x000FD970, 0x00083560, 0x000D0600, 0x000D0B80, 0x0006F5F0, 0x0010D020, 0x00115F30, 0x0010E930, 0x0010DF60, 0x001284F0, 0x0007F390, 0x000A6B00, 0x000C50F0, 0x000C96B0,
-        0x000D0100, 0x000D0790, 0x00023060, 0x000A6E00, 0x00085820, 0x000836A0,
-        0x00027E00, 0x00084440,
-        0x0001BA10, 0x000241D0, 0x00028F60, 0x00070C30, 0x00070D60, 0x00082E40, 0x000A9050, 0x0009E240
-    };
-    static const recomp_func_t expected[] = {
-        qpr2_recovered_0007F9F0, qpr2_recovered_0007FEF0, qpr2_recovered_00119360,
-        qpr2_recovered_00044010, qpr2_recovered_0003D060, qpr2_recovered_00043BE0, qpr2_recovered_00045060, qpr2_recovered_0006B950, qpr2_recovered_00045510,
-        qpr2_recovered_00020600, qpr2_recovered_00028740, qpr2_recovered_00029340,
-        qpr2_recovered_0002EBA0,
-        qpr2_recovered_000E0220, qpr2_recovered_000DA770, qpr2_recovered_00085680, qpr2_recovered_000C3310, qpr2_recovered_000C47A0, qpr2_recovered_000C3AF0, qpr2_recovered_000C2DD0, qpr2_recovered_000C6140, qpr2_recovered_000C0860,
-        qpr2_recovered_000FD970, qpr2_recovered_00083560, qpr2_recovered_000D0600, qpr2_recovered_000D0B80, qpr2_recovered_0006F5F0, qpr2_recovered_0010D020, qpr2_recovered_00115F30, qpr2_recovered_0010E930, qpr2_recovered_0010DF60, qpr2_recovered_001284F0, qpr2_recovered_0007F390, qpr2_recovered_000A6B00, qpr2_recovered_000C50F0, qpr2_recovered_000C96B0,
-        qpr2_recovered_000D0100, qpr2_recovered_000D0790,
-        qpr2_recovered_00023060, qpr2_recovered_000A6E00,
-        qpr2_recovered_00085820, qpr2_recovered_000836A0,
-        qpr2_recovered_00027E00, qpr2_recovered_00084440,
-        qpr2_recovered_0001BA10, qpr2_recovered_000241D0, qpr2_recovered_00028F60, qpr2_recovered_00070C30, qpr2_recovered_00070D60, qpr2_recovered_00082E40, qpr2_recovered_000A9050, qpr2_recovered_0009E240
-    };
     unsigned resolved = 0;
-    for (unsigned i = 0; i < sizeof(addresses) / sizeof(addresses[0]); ++i)
-        if (recomp_lookup_manual(addresses[i]) == expected[i]) ++resolved;
-    fprintf(stderr, "[OVERLAY-CHECK] dispatcher=v62 level_callbacks=%u/52\n", resolved);
-    return resolved == 52;
+    unsigned level_resolved = 0;
+    unsigned total = 0;
+#define QPR2_CALLBACK(address, level) \
+    do { \
+        unsigned valid = recomp_lookup_manual(0x##address##u) == qpr2_recovered_##address; \
+        resolved += valid; \
+        level_resolved += (level) * valid; \
+        ++total; \
+    } while (0);
+#include "qpr2_callbacks.def"
+#undef QPR2_CALLBACK
+    fprintf(stderr, "[CALLBACK-CHECK] resolved=%u/%u level_callbacks=%u/52\n",
+            resolved, total, level_resolved);
+    return resolved == total && level_resolved == 52;
 }
 
 /* Direct stubs bypass indirect-call failure reporting. Observe their first

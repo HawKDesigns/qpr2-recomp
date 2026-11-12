@@ -8,6 +8,9 @@ uint8_t *g_apu_ram_ptr;
 struct McpxApuDebug g_dbg,g_dbg_cache;
 int g_dbg_voice_monitor=-1;
 uint64_t g_dbg_muted_voices[4];
+ApuIrqStats apu_irq_stats;
+int apu_env_on(const char *name) { (void)name; return 0; }
+const char *mcpx_apu_phys_class(uint64_t address) { (void)address; return "fixture"; }
 uint8_t *mcpx_apu_phys(uint64_t a){assert(a<0x40000);return g_apu_ram_ptr+a;}
 static unsigned rng=1;
 static float random_float(void){rng=rng*1664525u+1013904223u;return ((rng>>8)&65535)/32768.0f-1;}
