@@ -492,13 +492,15 @@ def apply_known_generated_bridges(generated_dir: Path, xbe_sha256: str) -> int:
         "\nvoid recomp_nv2a_cache_flush(uint32_t register_va);"
         "\nvoid recomp_nv2a_submit(uint32_t register_va, uint32_t put);"
         "\nint recomp_nv2a_fence_wait(uint32_t device, uint32_t requested);"
+        "\nvoid qpr2_xid_trace_completion(uint32_t request);"
+        "\nvoid qpr2_xid_trace_match(uint32_t controller, int accepted);"
     )
     if declarations not in header:
         if header.count(anchor) != 1 or any(
             declaration in header for declaration in declarations.splitlines()
             if declaration
         ):
-            raise PipelineError("generated NV2A bridge declarations have drifted")
+            raise PipelineError("generated host bridge declarations have drifted")
         header_path.write_text(
             header.replace(anchor, anchor + declarations), encoding="utf-8"
         )
@@ -531,7 +533,7 @@ def apply_known_generated_bridges(generated_dir: Path, xbe_sha256: str) -> int:
         if body.count(replacement) == 1:
             return body
         if body.count(needle) != 1:
-            raise PipelineError(f"NV2A bridge 0x{address:08X} changed shape "
+            raise PipelineError(f"Host bridge 0x{address:08X} changed shape "
                                 f"at {needle.strip()}")
         changed += 1
         return body.replace(needle, replacement)
@@ -561,6 +563,22 @@ def apply_known_generated_bridges(generated_dir: Path, xbe_sha256: str) -> int:
         for needle, addition in patches:
             body = add_after(body, address, needle, addition)
         replace_body(path, match, body)
+
+    # Trace the title's validation of the XID descriptor after OHCI reports
+    # completion. USB transport logging alone cannot see the guest's result.
+    xid = 0x001A830C
+    path, match = find_function(xid)
+    body = match.group()
+    for marker, hook in (
+        ("    RECOMP_PC(0x001A831Au);\n    eax = MEM32(esp + 0x10);\n",
+         "    qpr2_xid_trace_completion(eax);\n"),
+        ("    RECOMP_PC(0x001A83B1u);\n",
+         "    qpr2_xid_trace_match(esi, 1);\n"),
+        ("    RECOMP_PC(0x001A83CBu);\n",
+         "    qpr2_xid_trace_match(esi, 0);\n"),
+    ):
+        body = add_after(body, xid, marker, hook)
+    replace_body(path, match, body)
 
     macros = {
         "RECOMP_ICALL_SAFE_AT": "QPR2_UI_ICALL",

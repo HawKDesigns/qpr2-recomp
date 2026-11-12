@@ -23,6 +23,37 @@ extern RECOMP_TLS uint32_t g_ebx, g_esi, g_edi;
 extern RECOMP_TLS volatile uint32_t g_recomp_pc;
 extern void xbox_KernelProgressDump(void);
 
+/* The verified retail XPP completion reads this descriptor and request.
+ * Keep enumeration diagnostics opt-in and off the periodic report path. */
+void qpr2_xid_trace_completion(uint32_t request)
+{
+    if (!getenv("RECOMP_INPUT_DIAG")) return;
+    const uint32_t descriptor = 0x001F28E4u;
+    fprintf(stderr,
+            "[XPP-XID] completion request=%08X status=%08X transferred=%u "
+            "descriptor=%02X/%02X version=%04X type=%02X subtype=%02X "
+            "report_in=%u report_out=%u\n",
+            request, MEM32(request + 4), MEM32(request + 0x14),
+            (unsigned)MEM8(descriptor), (unsigned)MEM8(descriptor + 1),
+            (unsigned)MEM16(descriptor + 2), (unsigned)MEM8(descriptor + 4),
+            (unsigned)MEM8(descriptor + 5), (unsigned)MEM8(descriptor + 6),
+            (unsigned)MEM8(descriptor + 7));
+    fflush(stderr);
+}
+
+void qpr2_xid_trace_match(uint32_t controller, int accepted)
+{
+    if (!getenv("RECOMP_INPUT_DIAG")) return;
+    fprintf(stderr,
+            "[XPP-XID] %s controller=%08X type_table=%08X "
+            "endpoint_in=%02X/%u endpoint_out=%02X/%u\n",
+            accepted ? "accepted" : "rejected", controller,
+            MEM32(controller + 0xE),
+            (unsigned)MEM8(controller + 8), (unsigned)MEM8(controller + 6),
+            (unsigned)MEM8(controller + 9), (unsigned)MEM8(controller + 7));
+    fflush(stderr);
+}
+
 /* QPR2 reaches WBINVD after publishing GPU/contiguous-memory state during
  * D3D device setup. A user-mode host cannot execute that privileged
  * instruction; translated guest memory is already coherent, so retain the

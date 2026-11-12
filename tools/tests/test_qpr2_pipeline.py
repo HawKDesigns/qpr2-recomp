@@ -295,6 +295,11 @@ class PipelineTests(unittest.TestCase):
                 write_unit("recomp_0036.c", 0x001971F0, flush),
             ]
             unrelated = write_unit("recomp_0037.c", 0x001128E0, submit_edx)
+            xid = write_unit("recomp_0038.c", 0x001A830C,
+                             "    RECOMP_PC(0x001A831Au);\n"
+                             "    eax = MEM32(esp + 0x10);\n"
+                             "    RECOMP_PC(0x001A83B1u);\n"
+                             "    RECOMP_PC(0x001A83CBu);\n")
             ui_first = write_unit("recomp_0019.c", 0x0010F440,
                                   "    RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x0010F45Cu);\n")
             ui = write_unit("recomp_0020.c", 0x0010FEE0,
@@ -307,7 +312,7 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(
                 pipeline.apply_known_generated_bridges(generated, "different"), 0)
             self.assertEqual(
-                pipeline.apply_known_generated_bridges(generated, digest), 16)
+                pipeline.apply_known_generated_bridges(generated, digest), 19)
             patched = bridge.read_text(encoding="utf-8")
             self.assertIn("requested_fence = MEM32(g_esp + 4)", patched)
             self.assertIn("recomp_nv2a_fence_wait(", patched)
@@ -321,6 +326,10 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("QPR2_UI_ICALL_CC(", ui.read_text())
             self.assertIn("qpr2_ui_trace(0, 0x0010FEE0u", ui.read_text())
             self.assertIn("void recomp_nv2a_submit(", header.read_text())
+            self.assertIn("void qpr2_xid_trace_completion(", header.read_text())
+            self.assertIn("qpr2_xid_trace_completion(eax);", xid.read_text())
+            self.assertIn("qpr2_xid_trace_match(esi, 1);", xid.read_text())
+            self.assertIn("qpr2_xid_trace_match(esi, 0);", xid.read_text())
             for address in addresses:
                 self.assertIn(
                     f"void sub_{address:08X}(void) "
