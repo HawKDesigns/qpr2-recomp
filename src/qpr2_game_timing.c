@@ -1,5 +1,7 @@
 /* Bounded read-only observations. No guest register or memory writes. */
 #include "qpr2_game_timing.h"
+#include "platform/frame_trace.h"
+#include "platform/host_time.h"
 #include "recomp/gen/recomp_types.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,6 +42,19 @@ Qpr2GameTiming qpr2_game_timing_begin(uint32_t function, uint32_t object,
 {
     Qpr2GameTiming token = {0};
     unsigned i;
+#if defined(XBOX_FRAME_TELEMETRY)
+    /* The recovered camera update calls the preview animation-node walker.
+     * Emit activity periodically so the offline label expires on exit. */
+    if (function == 0x0007F390u && xbox_frame_trace_enabled()) {
+        static QPR2_TIMING_TLS uint64_t next_preview;
+        uint64_t now = xbox_HostNowNs();
+        if (now >= next_preview) {
+            xbox_frame_trace_note(XBOX_TRACE_TITLE, XBOX_TRACE_SCENE_ACTIVITY,
+                                  0, XBOX_PHASE_PREVIEW, 0, 0);
+            next_preview = now + 250000000ull;
+        }
+    }
+#endif
     if (s_enabled < 0) {
         const char *enabled = getenv("RECOMP_GAME_TIMING");
         s_enabled = enabled && *enabled && *enabled != '0';

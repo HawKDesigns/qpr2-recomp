@@ -68,7 +68,7 @@
       "type": "toggle", "env": "RECOMP_GPU_READBACK_QUEUE", "default": "1", "requires": "gpu_native",
       "label": "Queue target readbacks", "help": "Keeps native target copies pending across eligible target switches. CPU consumers, fences and other dependencies can still force a wait."},
     {"id": "rotate_surfaces", "scope": "game", "page": "performance", "group": "Comparison switches",
-      "type": "toggle", "env": "RECOMP_GPU_ROTATE_SURFACES", "default": "0", "requires": "target_queue",
+      "type": "toggle", "env": "RECOMP_GPU_ROTATE_SURFACES", "default": "1", "requires": "target_queue",
       "label": "Reuse queued GPU surfaces", "help": "Keeps the finished render buffer as the queued snapshot and draws into another buffer. This can skip a full GPU copy per eligible target switch."},
     {"id": "defer_readback", "scope": "game", "page": "performance", "group": "Comparison switches",
       "type": "toggle", "env": "RECOMP_GPU_DEFER_READBACK", "default": "1", "requires": "target_queue",

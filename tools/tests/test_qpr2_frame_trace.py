@@ -49,6 +49,8 @@ class FrameTraceTest(unittest.TestCase):
             self.assertEqual(boot["measured_intervals"], 2)
             self.assertEqual(boot["median_ms"], 30)
             self.assertEqual(boot["p95_ms"], 40)
+            self.assertEqual((boot["duration_ms"], boot["max_ms"], boot["over_100_ms"]), (60, 40, 0))
+            self.assertEqual(boot["guest_display_vblank_hz"], 4 * 1000 / 60)
             self.assertEqual(summary["phases"]["behind"]["excluded_intervals"], {"missing_flip": 1})
             with (run / "frames.csv").open(newline="") as stream:
                 rows = list(csv.DictReader(stream))
@@ -113,3 +115,51 @@ class FrameTraceTest(unittest.TestCase):
             self.assertTrue(data["trace_complete_without_loss"])
             self.assertEqual(data["phases"]["behind"]["slow_and_fast_frame_means"]
                              ["over_33ms"]["queued_map_ms"], 9)
+
+    def test_version_three_diagnostics(self):
+        with tempfile.TemporaryDirectory() as name:
+            run = Path(name)
+            (run / "run.json").write_text(json.dumps({
+                "run_id": "profile-v3", "mode": "Benchmark", "status": "exited", "xbe_sha256": "test",
+            }))
+            (run / "memory-map.json").write_text(json.dumps({
+                "xbe_sha256": "test", "ranges": [{
+                    "source": "xbe_section_table", "name": "D3D", "guest_va": "0x100",
+                    "end_exclusive": "0x200", "declared_executable": True,
+                }],
+            }))
+            records = [
+                record(10, 1, trace.SCENE_ACTIVITY, producer=2, args=(2, 0, 0)),
+                record(20, 1, trace.FLIP, frame=1),
+                record(35, 2, trace.DEPTH_LAYOUT, frame=2, args=(0x3BD8000, 640 | (480 << 16), 0x120)),
+                record(36, 3, trace.DEPTH_DRAIN, frame=2, args=(256 | (256 << 16), 0x203, 2000)),
+                record(130, 4, trace.FLIP, frame=2, args=(7, 0, 0)),
+                record(130, 5, trace.CPU_METRIC, frame=2, args=(58, 1, 0)),
+                record(130, 6, trace.PROFILE_FRAME, frame=2),
+                record(140, 1, trace.OVERLAY, producer=1, args=(1, 0, 0)),
+                record(160, 7, trace.FLIP, frame=3),
+                record(170, 2, trace.OVERLAY, producer=1),
+                record(190, 8, trace.FLIP, frame=4),
+                record(600, 9, trace.FLIP, frame=5),
+                record(4850, 2, trace.GUEST_PC, producer=2, args=(0x101, 17, 0)),
+                record(4900, 3, trace.THREAD_CPU, producer=2, frame=1, args=(10_000_000, 0, 42)),
+                record(5900, 4, trace.THREAD_CPU, producer=2, frame=1, args=(15_000_000, 0, 42)),
+                *(record(6000, 0, trace.FOOTER, producer=i) for i in range(3)),
+            ]
+            (run / "frame-trace.bin").write_bytes(
+                trace.HEADER.pack(b"QPTR", 3, trace.RECORD.size, 3) + b"".join(records))
+            summary = trace.export(run)
+            preview = summary["phases"]["preview"]
+            self.assertEqual(preview["over_100_ms"], 1)
+            self.assertIsNone(preview["kernel_interrupt_vblank_hz"])
+            self.assertEqual(preview["excluded_intervals"],
+                             {"first_frame": 1, "overlay": 1, "overlay_boundary": 1})
+            first, second = summary["diagnostic_windows"]
+            self.assertEqual(first["guest_pc_samples"], {"D3D": 1})
+            self.assertEqual(first["threads"]["fifo_executor"]["percent_of_one_core"], 50)
+            self.assertEqual(second["threads"]["fifo_executor"]["cpu_ms"], 450)
+            profile = json.loads((run / "profile-summary.json").read_text())
+            drain, = profile["depth_dependencies"]["drains"]
+            self.assertEqual((drain["producer_width"], drain["most_recent_binding"]["width"],
+                              drain["total_ms"], drain["publishes_depth"]), (256, 640, 2, True))
+            self.assertEqual(profile["phases"]["preview"]["per_frame_mean"]["raw_boundary_xy"], 1)

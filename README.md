@@ -10,8 +10,9 @@ files.
 
 This branch ports the working v126 QPR2 runtime onto upstream XboxRecomp
 v0.17.0. It keeps the v126 native D3D11 ROV renderer, raw GPU geometry,
-ordered FIFO completion, XMV clock and recovered title callbacks. The retail
-boot-to-race path and performance parity still need Windows hardware tests.
+ordered FIFO completion, XMV clock and recovered title callbacks. The clean
+Dunes1 baseline is accepted. See the [requirements audit](docs/CLEAN_V1_AUDIT.md)
+for the remaining checks.
 
 | Reference | QPR2 | XboxRecomp |
 | --- | --- | --- |
@@ -152,11 +153,10 @@ runtime actually admitted in the logs. Runtime defaults are in
 `RECOMP_GPU_POINT_BOUNDS=0` restores the prior AABB decision for a same-build
 comparison.
 
-For a same-build Dunes1 comparison, **Performance → Reuse queued GPU surfaces**
-enables the experimental render-buffer reuse. From PowerShell, use
-`$env:RECOMP_GPU_ROTATE_SURFACES = '1'` before running Benchmark. Use `'0'`
-for the baseline. The `[GPU-SURFACE-ROTATION]` line reports how many snapshot
-copies were skipped and their total size.
+**Performance → Reuse queued GPU surfaces** is on by default. Turn it off
+in the launcher or set `$env:RECOMP_GPU_ROTATE_SURFACES = '0'` for a same-build
+comparison. The `[GPU-SURFACE-ROTATION]` line reports the snapshot copies and
+logical bytes avoided.
 
 ## Diagnose race frame times
 
@@ -167,15 +167,28 @@ setup, current and queued staging Map waits, completion/report waits, guest
 memory publication, draw/triangle counts, and the producer size for dependency
 drains. CPU Map time includes waiting for earlier GPU work. Dependency drain
 time includes its nested stages. Guest fence waits may overlap the renderer.
-The GPU columns are sampled execution times for the submitting frame. Use
+The profile also records raw-geometry boundary fallback counts and observed
+ZETA bindings and dependency drains. The latest binding is contextual evidence
+and can differ from the actual producer. The GPU columns are sampled execution
+times for the submitting frame. Use
 the sample counts and drop/invalid counters to assess coverage. Benchmark
 leaves the shader replay probe off so its extra GPU work stays out of the timing.
 
-Use **F5** at countdown, **F6** on clear track, **F7** behind visible AI, and
+`frame-summary.json` includes the worst interval, counts over 100 ms, measured
+duration, the guest display clock, and five-second Windows thread CPU summaries.
+The optional kernel interrupt schedule has its own rate when observed.
+For section-bucketed guest main PC samples, use
+`./rebuild-and-run.ps1 -Mode Benchmark -SampleGuestPc`. This uses the separate
+PC-tracking build and should be compared with captures using the same build.
+
+Video and preview-camera activity can label phases automatically. Use **F5**
+at countdown, **F6** on clear track, **F7** behind visible AI, and
 **F4** outside those scenes. Press **F3** before pausing and again after
 resuming. F3 marks an exclusion and leaves the current scene label in place.
-An interval crossing the marker is excluded as well. Keep **F8** capture
-outside the timed part of the run. Use the same track, rider, and camera for
+An interval crossing the marker is excluded as well. **F2** toggles the
+in-game frame-time graph. The exporter excludes intervals with the graph open
+and intervals crossing its toggle. Keep **F8** capture outside the timed part
+of the run. Use the same track, rider, and camera for
 comparisons. For an overhead check, `RECOMP_FRAME_PROFILE=0` keeps basic frame
 pacing while omitting the detailed CPU/GPU profile. Compare alternating runs
 from the same build and scene.

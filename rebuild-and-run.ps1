@@ -5,7 +5,8 @@ param(
     [ValidateRange(0, 86400)]
     [int]$TimeoutSeconds = 0,
     [switch]$BuildOnly,
-    [switch]$NoFrameTrace
+    [switch]$NoFrameTrace,
+    [switch]$SampleGuestPc
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,7 +14,8 @@ $root = $PSScriptRoot
 $runtimePath = "third_party/xboxrecomp"
 $runId = (Get-Date -Format "yyyyMMdd-HHmmss-fff") + "-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
 $runLogDir = Join-Path $root "logs\clean-v1-$runId"
-$buildVariant = if ($Mode -eq "Debug") { "build-clean-v1-debug" } else { "build-clean-v1" }
+$trackGuestPc = $Mode -eq "Debug" -or $SampleGuestPc
+$buildVariant = if ($trackGuestPc) { "build-clean-v1-debug" } else { "build-clean-v1" }
 $buildDir = Join-Path $root $buildVariant
 $runtimeSettings = Import-PowerShellDataFile (Join-Path $root "tools/qpr2_runtime.psd1")
 
@@ -29,6 +31,74 @@ function Invoke-Qpr2Command {
     }
     $exitCode | Set-Content "$LogFile.exitcode"
     if ($exitCode -ne 0) { throw "$Command exited $exitCode. See $LogFile." }
+}
+
+function Get-Qpr2Toolchain {
+    $cache = Get-Content -LiteralPath (Join-Path $buildDir "CMakeCache.txt")
+    $compiler = Get-ChildItem -LiteralPath (Join-Path $buildDir "CMakeFiles") -Recurse -Filter "CMakeCCompiler.cmake" -File |
+        Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+    $toolchain = [ordered]@{}
+    foreach ($line in $cache) {
+        if ($line -match '^CMAKE_(GENERATOR|CACHE_(?:MAJOR|MINOR|PATCH)_VERSION|GENERATOR_PLATFORM):[^=]+=(.*)$') {
+            $toolchain[$Matches[1].ToLowerInvariant()] = $Matches[2]
+        }
+    }
+    if ($compiler) {
+        foreach ($line in (Get-Content -LiteralPath $compiler.FullName)) {
+            if ($line -match '^set\(CMAKE_(C_COMPILER_ID|C_COMPILER_VERSION) "([^"]+)"\)$') {
+                $toolchain[$Matches[1].ToLowerInvariant()] = $Matches[2]
+            }
+        }
+    }
+    $configureLog = Get-Content -LiteralPath (Join-Path $runLogDir "configure.log")
+    foreach ($line in $configureLog) {
+        if ($line -match 'Selecting Windows SDK version ([\d.]+)') { $toolchain["windows_sdk"] = $Matches[1] }
+    }
+    $buildLog = Get-Content -LiteralPath (Join-Path $runLogDir "build.log") -TotalCount 20
+    foreach ($line in $buildLog) {
+        if ($line -match 'MSBuild version ([^ ]+)') { $toolchain["msbuild"] = $Matches[1] }
+    }
+    $project = Join-Path $buildDir "qpr2_recomp.vcxproj"
+    if (-not $toolchain.Contains("windows_sdk") -and (Test-Path -LiteralPath $project)) {
+        $match = Select-String -LiteralPath $project -Pattern '<WindowsTargetPlatformVersion>([\d.]+)<' | Select-Object -First 1
+        if ($match) { $toolchain["windows_sdk"] = $match.Matches[0].Groups[1].Value }
+    }
+    return $toolchain
+}
+
+function Get-Qpr2Cim([string]$Class, [string[]]$Properties) {
+    try { Get-CimInstance -ClassName $Class -Property $Properties -OperationTimeoutSec 5 -ErrorAction Stop }
+    catch { Write-Verbose "System metadata for $Class is unavailable." }
+}
+
+function Add-Qpr2RunHardware($Manifest, [string]$RuntimeLog) {
+    $processors = @(Get-Qpr2Cim "Win32_Processor" @("Name", "NumberOfCores", "NumberOfLogicalProcessors"))
+    $system = Get-Qpr2Cim "Win32_ComputerSystem" @("TotalPhysicalMemory") | Select-Object -First 1
+    $Manifest["cpu"] = @($processors | ForEach-Object { @{
+        name = $_.Name.Trim()
+        cores = $_.NumberOfCores
+        logical_processors = $_.NumberOfLogicalProcessors
+    } })
+    if ($system) { $Manifest["ram_bytes"] = [long]$system.TotalPhysicalMemory }
+    $id = Select-String -LiteralPath $RuntimeLog -Pattern '^\[GPU-ADAPTER-ID\] vendor=([0-9A-F]+) device=([0-9A-F]+) subsystem=([0-9A-F]+) revision=([0-9A-F]+)' |
+        Select-Object -First 1
+    $size = Select-String -LiteralPath $RuntimeLog -Pattern '^\s*\[FBWIN\] framebuffer window open \((\d+)x(\d+)\)' | Select-Object -First 1
+    if ($size) {
+        $groups = $size.Matches[0].Groups
+        $Manifest["framebuffer"] = @{ width = [int]$groups[1].Value; height = [int]$groups[2].Value }
+    }
+    if ($id) {
+        $groups = $id.Matches[0].Groups
+        $prefix = "PCI\VEN_$($groups[1].Value)&DEV_$($groups[2].Value)&SUBSYS_$($groups[3].Value)&REV_$($groups[4].Value)"
+        if ($Manifest["raster_adapter"]) { $Manifest["raster_adapter"]["pci_id"] = $prefix }
+        $versions = @(Get-Qpr2Cim "Win32_VideoController" @("PNPDeviceID", "DriverVersion") |
+            Where-Object { $_.PNPDeviceID -like "$prefix*" -and $_.DriverVersion } |
+            Select-Object -ExpandProperty DriverVersion -Unique)
+        if ($versions.Count -eq 1) { $Manifest["gpu_driver"] = $versions[0] }
+    }
+    $parity = Select-String -LiteralPath $RuntimeLog -Pattern '^\[(?:GPU-RASTER|GPU-TARGET-RESUME|GPU-TEXTURE-BRIDGE|GPU-GEOMETRY)\].*(?:comparison|mismatch|fallback|retained)' |
+        Where-Object { $_.Line -notmatch '\bdraws=' } | Select-Object -First 64
+    $Manifest["renderer_admission"] = @($parity | ForEach-Object { $_.Line })
 }
 
 # Windows' py launcher can terminate with 0xC0000022 before a Python script
@@ -146,8 +216,11 @@ function Get-Qpr2RuntimeSource([string]$PinnedRevision, [bool]$TitleIsArchive) {
 
     $rendererHeader = Join-Path $runtimePath "src/kernel/nv2a_overlay_revision.h"
     $frameTraceSource = Join-Path $runtimePath "src/platform/frame_trace.c"
+    $frameTraceHeader = Join-Path $runtimePath "src/platform/frame_trace.h"
     if (-not (Test-Path -LiteralPath $rendererHeader -PathType Leaf) -or
         -not (Test-Path -LiteralPath $frameTraceSource -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $frameTraceHeader -PathType Leaf) -or
+        -not (Select-String -LiteralPath $frameTraceHeader -Quiet -SimpleMatch 'XBOX_TRACE_DEPTH_DRAIN') -or
         -not (Select-String -LiteralPath $rendererHeader -Quiet -Pattern '^#define QPR2_RENDERER_REVISION 1701u$') -or
         -not (Select-String -LiteralPath $lifter -Quiet -SimpleMatch '--runtime-instruction-hooks')) {
         throw "The XboxRecomp source in $runtimePath is incompatible. Use the QPR2 runtime archive for $PinnedRevision."
@@ -203,7 +276,7 @@ function Invoke-Qpr2BuildAndRun {
         runtime_lift_identity = $runtime.LiftIdentity
         xbe_sha256 = $xbeHash
         configuration = "Release"
-        guest_pc_tracking = ($Mode -eq "Debug")
+        guest_pc_tracking = $trackGuestPc
         os = [Environment]::OSVersion.VersionString
         status = "preparing"
     }
@@ -347,7 +420,7 @@ function Invoke-Qpr2BuildAndRun {
     }
 
 
-    $trackPc = if ($Mode -eq "Debug") { "ON" } else { "OFF" }
+    $trackPc = if ($trackGuestPc) { "ON" } else { "OFF" }
     Invoke-Qpr2Command -Command cmake -Arguments @(
         "-S", ".", "-B", $buildDir, "-G", "Visual Studio 17 2022", "-A", "x64",
         "-DQPR2_TRACK_GUEST_PC=$trackPc"
@@ -355,6 +428,7 @@ function Invoke-Qpr2BuildAndRun {
     Invoke-Qpr2Command -Command cmake -Arguments @(
         "--build", $buildDir, "--config", "Release", "--target", "qpr2_recomp", "--parallel"
     ) -LogFile (Join-Path $runLogDir "build.log")
+    $manifest["toolchain"] = Get-Qpr2Toolchain
 
     $embeddedShader = Join-Path $runtimePath "src/kernel/nv2a_gpu_shader.h"
     $embeddedHash = (Get-FileHash $embeddedShader -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -468,6 +542,7 @@ function Invoke-Qpr2BuildAndRun {
                     dedicated_mib = [long]$groups[3].Value
                 }
             }
+            if ($Mode -ne "Play") { Add-Qpr2RunHardware $manifest $tempStderr }
         }
         $manifest | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 $manifestPath
     }

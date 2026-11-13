@@ -22,6 +22,9 @@ typedef int32_t LONG;
 typedef uint32_t DWORD;
 typedef pthread_t *HANDLE;
 typedef void *LPVOID;
+typedef struct { DWORD dwLowDateTime, dwHighDateTime; } FILETIME;
+#define THREAD_QUERY_LIMITED_INFORMATION 0x0800
+#define FALSE 0
 #define WINAPI
 static inline LONG InterlockedCompareExchange(volatile LONG *ptr, LONG value, LONG expected) {
     __atomic_compare_exchange_n(ptr, &expected, value, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
@@ -37,6 +40,9 @@ static inline void InterlockedIncrement(volatile LONG *ptr) {
     InterlockedExchangeAdd(ptr, 1);
 }
 DWORD GetCurrentThreadId(void);
+HANDLE OpenThread(DWORD, int, DWORD);
+int CloseHandle(HANDLE);
+int GetThreadTimes(HANDLE, FILETIME *, FILETIME *, FILETIME *, FILETIME *);
 HANDLE CreateThread(void *, size_t, DWORD (*)(LPVOID), LPVOID, DWORD, DWORD *);
 DWORD WaitForSingleObject(HANDLE, DWORD);
 void Sleep(DWORD);
@@ -63,6 +69,20 @@ static void *run_writer(void *unused)
 }
 
 DWORD GetCurrentThreadId(void) { return 3; }
+HANDLE OpenThread(DWORD access, int inherit, DWORD id)
+{
+    assert(access == THREAD_QUERY_LIMITED_INFORMATION && !inherit && id == 3);
+    return &writer;
+}
+int CloseHandle(HANDLE handle) { assert(handle == &writer); return 1; }
+int GetThreadTimes(HANDLE handle, FILETIME *creation, FILETIME *exit, FILETIME *kernel, FILETIME *user)
+{
+    assert(handle == &writer);
+    *creation = *exit = (FILETIME){0, 0};
+    *kernel = (FILETIME){10000, 0};
+    *user = (FILETIME){20000, 0};
+    return 1;
+}
 HANDLE CreateThread(void *security, size_t stack, DWORD (*proc)(LPVOID),
                     LPVOID arg, DWORD flags, DWORD *id)
 {

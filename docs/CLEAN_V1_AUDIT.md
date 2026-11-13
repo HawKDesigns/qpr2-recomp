@@ -1,60 +1,40 @@
 # QPR2 clean v1 requirements audit
 
-Scope is the restart instructions and the clean v1 source and debugger specification. This audit covers the Windows `clean-v1-v017` title branch, its `qpr2-clean-v1-v017` runtime branch, and the returned retail run logs. The two supplied copies of the debugger specification have identical contents.
+The clean runtime descends from XboxRecomp v0.17.0 (`343b6d8`). The title
+submodule and `tools/xboxrecomp-pin.txt` must identify the same runtime. The
+last tested v126 remains available at title `0f55e19` and runtime `92a5f03`.
 
-**Dunes1 comparison accepted.** The player reached a race, reported v126 performance parity, and observed the mounted ATV and rider shadows rendering. Treat this as the clean v1 performance baseline. The 30 FPS crowded-race target is a later optimization milestone. The rest of the v1 acceptance criteria below still apply.
+## Baseline and settings
 
-## Windows evidence
+The Dunes1 comparison is accepted. The Windows acceptance checklist also
+covers intro, input, menus, preview, terrain, audio and race finish.
+See [CLEAN_V1.md](CLEAN_V1.md).
 
-The returned logs identify an RX 6900 XT, feature level `C100`, a 640×480 framebuffer, the matching North American XBE, and the v126 embedded shader hash `0e50cf80…5465`. The November 13 runs admitted native ROV and raw GPU geometry, reported 180 vertex variants and all three literal materials (`ready_mask=7`), resolved all 70 manual callbacks and 52 level callbacks, and initialized stereo XAudio2 at 48 kHz with six 1,024-sample buffers. These observations establish activation and configuration. Player reports supply the visual and gameplay observations.
+QPR2 enables queued surface reuse by default. The renderer can reuse a
+finished surface as a queued snapshot and report the logical copy savings.
+The launcher and environment overrides remain available for comparisons.
 
-| Run | Evidence | Limitation |
+## Source and runtime requirements
+
+| Requirement | Status | Evidence or remaining work |
 | --- | --- | --- |
-| `20261112-150755-634-9fe8a99e` | Reported parity and mounted shadows. 53 mixed race windows had an 18.1 FPS median and a 12.6–29.4 FPS range. | The watchdog ended the capture after 360 seconds. The archived benchmark has no exact scene marks or per-frame export. |
-| `20261113-015231-241-e8b6f413` | Setting `0`. Mostly with visible AI, then ahead near the end. Native rendering and geometry active. | Runtime logged window close, while the launcher recorded `125` because it could not read the process exit code. |
-| `20261113-015731-850-dba11550` | Setting `1`. Mostly behind the pack with AI out of view, then back with the pack near the end. Native rendering and geometry active. | Runtime logged window close and launcher recorded `125`. The player confirmed the XboxRecomp update had yet to be copied into the ZIP install. That explains the missing `[GPU-READONLY-DEPTH]` line despite the requested setting and pin in the manifest. |
-| `20261113-023617-178-00e5cc6f` | Setting `1` with the updated runtime. MSBuild compiled `nv2a_gpu_raster.c` and the binary reported the new counters. Player confirmed ATV and rider shadows still rendered while driving ahead of and behind AI. | Visibility and time spent near the pack varied during the run. The launcher still recorded `125` after the window-close message. This archive predates the updated exit-status and memory-map exports. |
-| `20261113-032228-495-0ba5a86b` | Full Debug run with launcher host integration. D3D11 presentation, V-Sync and linear filtering were active. The player reported working vibration, about 12 FPS at countdown and frame-rate variation by track area with AI out of view. | Debug guest PC tracking and extra diagnostics were active. No timed track-area markers were recorded. The binary reported native rendering with the backend trial disabled. The ZIP lacks both debugger exports and their export logs, consistent with an older title runner. |
-| `20261113-034507-663-3cdfdb9b` | Direct PowerShell Debug run with the updated title script. The result ZIP contains both debugger exports and their successful export logs. `run.json` reports `exited` with code `0` after the window closed. | Guest PC tracking and extra diagnostics were active. Use Benchmark mode for pacing comparisons. |
+| Verified XBE, local shader/lift inputs, callback registry and separate v126 history | Implemented | The runner checks the XBE hash and runtime pin. The title generates lifted C and shader inputs locally. Numbered recovery units and scattered title address tables still need migration. |
+| Native raster and ordered guest completion | Baseline verified | The Windows admission checks and local queue, fence and publication fixtures cover the accepted path. Retest after changing depth ownership. |
+| Reproducible run identity | Implemented with hardware fields to verify | `run.json` records the executable, shader and archive hashes, runtime pin, effective environment, toolchain, framebuffer size, CPU, RAM, matching driver version when available, and renderer admission messages. |
+| Phase and frame-time comparison | Implemented with partial automatic labeling | `frames.csv`, `frame-summary.json`, manual F4–F7 and a folder comparison cover flip, handoff, draw, guest display vblank, maximum, duration and over-budget intervals. Video and preview activity supply provisional automatic labels. Rider/ATV menus, countdown and racer visibility need validated game-side transitions. |
+| Attributed performance measurements | Implemented with Windows verification pending | Benchmark exports per-frame FIFO, target, CPU wait and GPU sample data, boundary fallback counts and observed ZETA layouts. The five-second report adds per-role Windows thread CPU time. `-SampleGuestPc` adds section-bucketed last guest-main PC samples. CPU wall scopes overlap GPU work and other threads. |
+| Shared depth layout and ownership | Open | The current depth cache uses one float buffer per ZETA offset. A change needs proof of which versions are consumed, cleared or observed, and validation of ordered publication, fence and visibility behavior. |
+| Bounded events and failure context | Partial | Frame, wait, dependency and sample events use the existing asynchronous recorder. Failure export can include watchdog registers, recent calls and FIFO progress. Live wait age and target generation, and targeted subsystem/address capture, remain open. |
+| Live stats and debugger | Partial | F2 displays flip FPS, the recent frame-time graph, p95, budget misses and draw count. Additional snapshot fields, safe pause/step, watch controls and live debugger views remain open. F3 marks a pause in the trace. |
+| Symbols and memory map | Offline foundation | Debug exports a hash-keyed symbol catalog. Benchmark and Debug export the startup memory map. Executed coverage, unresolved-callsite export, live allocations, stacks and bus ownership remain open. |
+| Mode overhead and optimization cleanup | Open | Compare tracing disabled, basic pacing, profiling and the open overlay on the same optimized build. Use matching scenes and integrity counters before removing active cache, batching or readback paths. |
 
-The updated run logged 59 color snapshots queued without depth publication and 59 shared-depth binds that skipped a dependency. All 59 occurred in one of 42 reporting windows. Across those windows the renderer queued 15,735 target copies and still performed 8,298 target-depth drains. The mixed driving workloads leave the FPS effect undetermined. Keep the setting off for clean v1 and defer the optimization decision until after the debugger and logging work.
+## Next Windows capture
 
-## Build, title glue, and renderer
-
-| Requirement | Status | Evidence or remaining acceptance |
-| --- | --- | --- |
-| Separate rollback and clean branches | **Pass** | Clean runtime descends from XboxRecomp v0.17.0 (`343b6d8`). The title gitlink and archive pin both resolve to `bda2909`. v126 stays available at title `0f55e19` and runtime `92a5f030`. |
-| Local XBE, shader prep, and Release build | **Windows pass** | `qpr2_pipeline.py` derives the title identity, generates local C, applies hash-locked recovery, and passes the direct-call override manifest to the lifter. The launcher verifies the XBE fingerprint and shader content. The two recent Windows archives show successful MSBuild 17.14 and SDK 10.0.26100 builds. Retail content and generated shader/lift files stay local. |
-| Runtime and build identity | **Partial** | Checkout mode verifies both revisions. Source-archive mode verifies renderer compatibility and lifter inputs. ZIP manifests need a content identity for the compiled title and runtime sources, including the raster source. Toolchain and adapter evidence currently lives in separate build/runtime logs. Driver and archive fingerprints need explicit manifest fields. |
-| Guest boot, intro, input, menus, and race | **Working path verified** | The logs show the guest booted through XAudio2 and 3D readiness. The player reached Dunes1 after the XID input and race-dispatch fixes. The elapsed XMV clock remains tied to the device field at `+0x1980`. A hardware acceptance checklist still needs explicit cold-intro pacing, controller and keyboard fallback, name entry and menu re-entry, preview progression, tires, terrain/collision, race time, SFX, and results-screen observations. |
-| Finish and close | **Partial** | The player reported a completed race. The updated Windows launcher recorded numeric exit code `0` on window close. A documented results-screen finish remains open. |
-| Callback registry and address-based dispatch | **Implemented** | `src/qpr2_callbacks.def` drives the manual lookup and startup validation. Ten reviewed entries have generated direct-call wrappers. The recovered `0x000AB8B0` race entry is lifted, and subsequent logs contain zero unresolved ICALL reports. The remaining source cleanup is grouping the numbered recovered files by subsystem and consolidating title-specific address tables into the hash-keyed profile. |
-| Native renderer and fallbacks | **Windows pass for admission** | Source-first global ROV, paired color/depth and visibility ordering, conservative coverage, validated compute/CPU fallback, 32,768 mesh slots, 64 MiB raw atlas, raw geometry and known shader variants are present. Windows logs show native paths active. Queue and completion fixtures cover alias/layout publication, reports, failed maps, and guest fence ordering. |
-| Target dependencies and instrumentation | **Partial** | The renderer logs dependency source, producer size and wall time. Shared depth caused 34.35 seconds of drains across the 53 baseline race windows. That time includes staging work. Layout, generation, producer/consumer history and wait age still need a structured view. Real depth writers retain ordered publication. |
-| Timing and presentation parity | **Baseline accepted** | The completed-flip clock and pacing windows are available. There is no reproducible input route or automatic scene/visibility marker, no distinct host handoff/draw counts and no matched frame-time distributions. Keep the accepted Dunes result and use the new diagnostics to improve future comparisons. |
-| Source and settings cleanup | **Partial** | One PowerShell profile owns default settings. The unused `RECOMP_GPU_LIVE_DEPTH` entry was removed after checking title and runtime source consumers. Early live depth, local ROV and compute autotune code are still present with those paths disabled by the baseline profile. Keep them and the narrower active readback, state, cache and batching paths on the cleanup inventory until their dependents and parity checks are identified. Preserve required GPU/CPU fallbacks and guest completion behavior. |
-
-## Debugger, logging, and offline tooling
-
-| Requirement | Status | Evidence or remaining acceptance |
-| --- | --- | --- |
-| Optimized symbols and crash context | **Partial** | Release builds request PDBs. Debug builds enable lifted PC tracking. The current crash handler and watchdog print registers, stack/PC and recent ICALL context. A bounded typed crash history, exported symbolized record, and progress snapshot for present/FIFO/fences/targets/wait age remain open. |
-| Function names, ABI and host lookup | **Offline foundation** | Debug mode exports `guest-symbols.json` with XBE hash and guest VA identity, real generated dispatch symbol, manual overrides, section/range, ABI inference, caller/vtable evidence and reviewed names. The lookup accepts names and VAs. Runtime function coverage, unresolved-site export, live lookup and breakpoint integration remain open. |
-| Memory map | **Startup foundation** | Benchmark and Debug modes export `memory-map.json` from XBE sections and the loader log. It records declared section permissions, observed ranges, trapped APU subrange, the verified contiguous/tiled alias and D3D pointer/field registrations. Live thread stacks, TLS and allocations, actual page protections, bus-token decoding and target ownership are still open. |
-| Low-overhead telemetry | **Partial** | Buffered stderr, completed-flip pacing, sampled draw timings and a bounded asynchronous D3D11 query pool exist. Queries use `D3D11_ASYNC_GETDATA_DONOTFLUSH`. Preallocated event rings, a background writer, common timestamped event schema, and visible overflow/drop reporting across producers are open. |
-| Frame data and phase comparison | **Open** | Add distinct guest tick, emulated vblank, completed flip, host handoff and host draw observations. Export `frames.csv`, phase and manual visibility markers, percentiles and over-budget counts. Add a run-folder comparison that preserves timing scopes and flags debug/capture intervals. |
-| Stats display | **Open** | The window title shows a flip-rate estimate and draw count. The specified opt-in overlay, recent frame-time plot, backend/fallback, shader state, CPU/GPU timings and pressure metrics need a shared snapshot. Visible-racer counts need a validated source. |
-| Live debugger, pause, step and watches | **Open** | Add a read-only snapshot consumer with thread registers, call history, FIFO and target state, staleness and bounded memory inspection. Add cooperative pause and frame/function stepping at safe points. The existing opt-in `RECOMP_WATCH` page trap is a primitive. Integrate it after safe control boundaries and input suppression are in place. |
-| Targeted capture and offline stall analysis | **Partial** | F8 renderer capture and text diagnostics are available. Time/address/queue filters, explicit capture exclusion from benchmark spans, and symbolized stall export/viewer remain open. |
-| Mode overhead | **Open** | Compare disabled, normal, overlay-open and profiling modes on the same Release binary after the snapshots and exports exist. Use frame-time distributions and event/query loss to evaluate cost. |
-
-## Verification and remaining order
-
-- The Python tooling suite passed all 16 tests. Windows Debug verified automatic exports and clean process status. The catalog has 8,933 guest functions, and the startup memory map has 22 ranges with a verified contiguous/tiled alias.
-- The fractional frame clock, concurrent presenter handoff, SIMD/scalar surface copy, completion token and all six queued-readback modes passed. CI now runs these asset-free checks from the pinned submodule. They exercise host/runtime logic through fixtures. Native MSVC, D3D11 and gameplay behavior are validated by the Windows run.
-- The exporter produced 22 memory ranges and six D3D offsets from each Windows archive. A replay using the supplied analysis and the pinned dispatch writer format exported 8,930 entries, 70 manual callbacks, 52 level callbacks and ten direct overrides. It exercised the metadata join without a retail build.
-- The standalone display-event/XMV integration fixture needs locally generated retail C. The raw GPU timing fixture needs the locally generated vertex program header to admit raw geometry. Their Windows startup/log evidence is recorded above. A source-only checkout cannot exercise those full fixtures as written.
-
-1. Continue the typed telemetry and phase/frame export work against the accepted baseline. Verify the automatic memory-map export in Benchmark mode.
-2. Build the shared snapshot, stats overlay and read-only debugger. Add safe pause/step and selective watches, then check mode overhead and complete the outstanding Windows correctness observations.
-3. Migrate the remaining version-labelled glue and remove measured leftovers with regression coverage. Resume FPS work after the v1 foundations and acceptance items are complete.
+Run Benchmark with the default renderer settings. Mark countdown, clear track
+and visible AI. Keep F2 closed during the measured intervals. The next trace
+should show whether FIFO wall time is active CPU time or blocked, and which
+ZETA bindings coincide with the expensive drains. Once those results are
+available, use the same scenes for the depth ownership comparison. A separate
+PC-tracked run can narrow down guest-main work if it accounts for a material
+share of a core.

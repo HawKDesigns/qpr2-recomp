@@ -13,11 +13,13 @@ from pathlib import Path
 import statistics
 import struct
 import sys
+from qpr2_debug_metadata import number
 
 HEADER = struct.Struct("<4sIII")
 RECORD = struct.Struct("<Q8I")
 (FLIP, HANDOFF, DRAW, PHASE, CAPTURE_BEGIN, CAPTURE_END, CPU_METRIC, GPU_SAMPLE,
- GUEST_FENCE_WAIT, PAUSE, PROFILE_FRAME) = range(1, 12)
+ GUEST_FENCE_WAIT, PAUSE, PROFILE_FRAME, THREAD_CPU, GUEST_PC, DEPTH_LAYOUT,
+ DEPTH_DRAIN, SCENE_ACTIVITY, OVERLAY) = range(1, 18)
 CPU_FIELDS = (
     "fifo_ms", "upload_ms", "geometry_submit_ms", "raster_submit_ms",
     "target_bind_ms", "current_map_ms", "queued_map_ms", "publication_ms",
@@ -29,9 +31,14 @@ DEPENDENCIES = ("guest_access", "guest_read", "target_color", "target_depth", "t
 TARGET_SIZES = ("640x480", "256x256", "128x128", "other")
 GPU_CLASSES = ("prepared", "raw", "copy")
 GPU_PHASES = ("vertex", "prepare", "pixels", "copy")
+RAW_BOUNDARY = ("raw_boundary_numeric", "raw_boundary_w", "raw_boundary_xy",
+                "raw_boundary_z", "raw_boundary_point_limit")
+RAW_COUNTS = ("raw_boundary_draws", "raw_boundary_vertices")
 FOOTER = 0xFFFFFFFF
 PRODUCERS = ("renderer", "window", "title")
-PHASES = ("unmarked", "boot", "preview", "countdown", "ahead", "behind", "unmarked")
+PHASES = ("unmarked", "boot", "preview", "countdown", "ahead", "behind", "unmarked", "video")
+THREAD_ROLES = ("guest_main", "fifo_executor", "gpu_startup", "presenter")
+WINDOW_NS = 5_000_000_000
 UINT32_MASK = 0xFFFFFFFF
 
 
@@ -54,10 +61,10 @@ def read_trace(path: Path) -> tuple[list[Event], dict]:
         if len(header) != HEADER.size:
             raise ValueError("missing frame trace header")
         magic, version, size, producers = HEADER.unpack(header)
-        if (magic != b"QPTR" or version not in (1, 2) or size != RECORD.size or
+        if (magic != b"QPTR" or version not in (1, 2, 3) or size != RECORD.size or
                 producers != len(PRODUCERS)):
             raise ValueError("unsupported frame trace header")
-        last_event = CAPTURE_END if version == 1 else PROFILE_FRAME
+        last_event = (CAPTURE_END, PROFILE_FRAME, OVERLAY)[version - 1]
         events = []
         dropped = {}
         last_sequence = {}
@@ -76,7 +83,7 @@ def read_trace(path: Path) -> tuple[list[Event], dict]:
                 continue
             if producer in dropped or event.kind not in range(FLIP, last_event + 1):
                 raise ValueError("invalid frame trace event")
-            if event.kind == PHASE and not 0 < event.arg0 < len(PHASES):
+            if event.kind in (PHASE, SCENE_ACTIVITY) and not 0 < event.arg0 < len(PHASES):
                 raise ValueError("invalid phase marker")
             last = last_sequence.get(producer, 0)
             if event.sequence <= last:
@@ -106,24 +113,44 @@ def frame_rows(events: list[Event]) -> tuple[list[dict], list[dict]]:
     phases = []
     phase = "unmarked"
     segment = 0
-    exclusion_epoch = pause_epoch = 0
+    exclusion_epoch = pause_epoch = overlay_epoch = 0
     capture = False
     paused = False
+    overlay = False
     last_flip = None
+    manual = False
+    activity = None
     for event in events:
         if event.kind == PHASE:
             phase = PHASES[event.arg0]
+            manual = bool(event.arg1) and phase != "unmarked"
             segment += 1
             phases.append({"timestamp_ns": event.timestamp, "segment": segment,
                            "phase": phase, "manual": bool(event.arg1)})
-        elif event.kind in (CAPTURE_BEGIN, CAPTURE_END):
-            capture = event.kind == CAPTURE_BEGIN
-            exclusion_epoch += 1
+        elif event.kind == SCENE_ACTIVITY:
+            activity = (PHASES[event.arg0], event.timestamp)
+        elif event.kind in (CAPTURE_BEGIN, CAPTURE_END, OVERLAY):
+            if event.kind == OVERLAY:
+                overlay = bool(event.arg0)
+                overlay_epoch += 1
+            else:
+                capture = event.kind == CAPTURE_BEGIN
+                exclusion_epoch += 1
         elif event.kind == PAUSE:
             paused = bool(event.arg0)
             pause_epoch += 1
         elif event.kind == FLIP:
-            previous, previous_segment, previous_epoch, previous_pause = last_flip or (None, None, None, None)
+            if not manual and activity:
+                active = activity[0] if event.timestamp - activity[1] <= 500_000_000 else "unmarked"
+                if active != phase:
+                    phase = active
+                    segment += 1
+                    phases.append({"timestamp_ns": event.timestamp, "segment": segment,
+                                   "phase": phase, "manual": False, "source": "activity"})
+                if active == "unmarked":
+                    activity = None
+            previous, previous_segment, previous_epoch, previous_pause, previous_overlay = (
+                last_flip or (None, None, None, None, None))
             row = {
                 "frame_id": event.frame,
                 "phase": phase,
@@ -135,10 +162,12 @@ def frame_rows(events: list[Event]) -> tuple[list[dict], list[dict]]:
                 "guest_ticks": None,
                 "emulated_vblanks": None,
                 "flip_commands": None,
-                "excluded": ("pause" if paused else "capture" if capture else "first_frame" if previous is None else
+                "excluded": ("pause" if paused else "capture" if capture else "overlay" if overlay else
+                             "first_frame" if previous is None else
                              "missing_flip" if difference(event.frame, previous.frame) != 1 else
                              "phase_boundary" if segment != previous_segment else
                              "pause_boundary" if pause_epoch != previous_pause else
+                             "overlay_boundary" if overlay_epoch != previous_overlay else
                              "capture_boundary" if exclusion_epoch != previous_epoch else ""),
             }
             if previous is not None and difference(event.frame, previous.frame) == 1:
@@ -147,7 +176,7 @@ def frame_rows(events: list[Event]) -> tuple[list[dict], list[dict]]:
                 row["emulated_vblanks"] = difference(event.arg1, previous.arg1)
                 row["flip_commands"] = difference(event.arg2, previous.arg2)
             rows[event.frame] = row
-            last_flip = (event, segment, exclusion_epoch, pause_epoch)
+            last_flip = (event, segment, exclusion_epoch, pause_epoch, overlay_epoch)
         elif event.kind in (HANDOFF, DRAW) and event.frame in rows:
             key = "handoff_ns" if event.kind == HANDOFF else "draw_ns"
             row = rows[event.frame]
@@ -169,6 +198,8 @@ def summarize(rows: list[dict]) -> dict:
         measured = [row for row in group if not row["excluded"]]
         samples = sorted(row["frame_ms"] for row in measured)
         duration_ms = sum(samples)
+        kernel_vblanks = sum(row["emulated_vblanks"] for row in measured)
+        display_rate = sum(row["guest_ticks"] for row in measured) * 1000 / duration_ms if duration_ms else None
         handoffs = [row for row in measured if row["handoff_ns"] is not None]
         draws = [row for row in measured if row["draw_ns"] is not None]
         flip_to_handoff = sorted((row["handoff_ns"] - row["flip_ns"]) / 1e6 for row in handoffs)
@@ -182,16 +213,94 @@ def summarize(rows: list[dict]) -> dict:
             "median_ms": statistics.median(samples) if samples else None,
             "p95_ms": percentile(samples, .95),
             "p99_ms": percentile(samples, .99),
+            "max_ms": max(samples, default=None),
+            "duration_ms": duration_ms,
             "over_33_33_ms": sum(x > 1000 / 30 for x in samples),
             "over_50_ms": sum(x > 50 for x in samples),
+            "over_100_ms": sum(x > 100 for x in samples),
             "host_handoffs": len(handoffs),
             "host_draws": len(draws),
             "flip_to_handoff_p95_ms": percentile(flip_to_handoff, .95),
             "handoff_to_draw_p95_ms": percentile(handoff_to_draw, .95),
-            "guest_tick_hz": sum(row["guest_ticks"] for row in measured) * 1000 / duration_ms if duration_ms else None,
-            "emulated_vblank_hz": sum(row["emulated_vblanks"] for row in measured) * 1000 / duration_ms if duration_ms else None,
+            "guest_tick_hz": display_rate,
+            "guest_display_vblank_hz": display_rate,
+            "emulated_vblank_hz": display_rate,  # Compatibility with the research CLI.
+            "kernel_interrupt_vblank_hz": kernel_vblanks * 1000 / duration_ms if kernel_vblanks else None,
         }
     return phases
+
+
+def diagnostic_windows(events: list[Event], rows: list[dict], sections: list[dict]) -> list[dict]:
+    ranges = [(number(s["virtual_addr"]), number(s["virtual_addr"]) + s["virtual_size"], s["name"])
+              for s in sections if s["executable"]]
+    windows = {}
+    previous = {}
+    for event in events:
+        if event.kind == THREAD_CPU and event.frame < len(THREAD_ROLES):
+            role = THREAD_ROLES[event.frame]
+            ticks = event.arg0 | (event.arg1 << 32)
+            before = previous.get(role)
+            previous[role] = (event.timestamp, ticks, event.arg2)
+            if not before or before[2] != event.arg2 or ticks < before[1]:
+                continue
+            start, delta = before[0], ticks - before[1]
+            span = event.timestamp - start
+            if span <= 0:
+                continue
+            # Apportion an interval that straddles a report boundary. The
+            # cumulative samples cannot locate the work within that interval.
+            for index in range(start // WINDOW_NS, (event.timestamp - 1) // WINDOW_NS + 1):
+                overlap = min(event.timestamp, (index + 1) * WINDOW_NS) - max(start, index * WINDOW_NS)
+                window = windows.setdefault(index, {})
+                cpu = window.setdefault("threads", {}).setdefault(role, {"cpu_ms": 0.0, "observed_ms": 0.0})
+                cpu["cpu_ms"] += delta / 10_000 * overlap / span
+                cpu["observed_ms"] += overlap / 1_000_000
+        elif event.kind == GUEST_PC:
+            bucket = next((name for start, end, name in ranges if start <= event.arg0 < end),
+                          "outside_executable_sections" if event.arg0 else "unavailable")
+            window = windows.setdefault(event.timestamp // WINDOW_NS, {})
+            window.setdefault("guest_pc_samples", Counter())[bucket] += 1
+    for row in rows:
+        window = windows.setdefault(row["flip_ns"] // WINDOW_NS, {})
+        key = "excluded_intervals" if row["excluded"] else "measured_scene_intervals"
+        window.setdefault(key, Counter())[row["excluded"] or row["phase"]] += 1
+    for window in windows.values():
+        for cpu in window.get("threads", {}).values():
+            cpu["percent_of_one_core"] = 100 * cpu["cpu_ms"] / cpu["observed_ms"]
+    return [dict(start_ns=i * WINDOW_NS, end_ns=(i + 1) * WINDOW_NS, **window)
+            for i, window in sorted(windows.items())]
+
+
+def depth_dependencies(events: list[Event], rows: list[dict]) -> dict:
+    frames = {row["frame_id"]: row for row in rows}
+    layouts = {}
+    drains = {}
+    last = None
+    for event in events:
+        if event.kind == DEPTH_LAYOUT:
+            layout = {
+                "zeta_offset": f"0x{event.arg0:08X}", "width": event.arg1 & 0xFFFF,
+                "height": event.arg1 >> 16, "surface_type": (event.arg2 >> 8) & 15,
+                "depth_format": (event.arg2 >> 4) & 15, "float_depth": bool(event.arg2 & 0x8000),
+                "zeta_pitch": event.arg2 >> 16,
+            }
+            last = tuple(layout.values())
+            layouts[last] = layout
+        elif event.kind == DEPTH_DRAIN:
+            frame = frames.get(event.frame)
+            scene = frame["excluded"] or frame["phase"] if frame else "no_flip"
+            key = (scene, event.arg0, last, event.arg1 & 3, event.arg1 >> 8)
+            drain = drains.setdefault(key, {"count": 0, "total_ms": 0.0, "max_ms": 0.0})
+            drain["count"] += 1
+            drain["total_ms"] += event.arg2 / 1000
+            drain["max_ms"] = max(drain["max_ms"], event.arg2 / 1000)
+    return {
+        "observed_bindings": list(layouts.values()),
+        "drains": [dict(scene=scene, producer_width=extent & 0xFFFF, producer_height=extent >> 16,
+                        most_recent_binding=layouts.get(binding), publishes_depth=bool(flags & 1),
+                        deferred_surface_copy=bool(flags & 2), queue_depth=queue, **stats)
+                   for (scene, extent, binding, flags, queue), stats in drains.items()],
+    }
 
 
 def frame_profile(events: list[Event], rows: list[dict], integrity: dict) -> tuple[list[dict], dict]:
@@ -212,6 +321,10 @@ def frame_profile(events: list[Event], rows: list[dict], integrity: dict) -> tup
                 key = drain_counts[event.arg0 - 24]
             elif 32 <= event.arg0 < 32 + len(dependencies):
                 key = dependencies[event.arg0 - 32]
+            elif 30 <= event.arg0 < 32:
+                key = RAW_COUNTS[event.arg0 - 30]
+            elif 56 <= event.arg0 < 56 + len(RAW_BOUNDARY):
+                key = RAW_BOUNDARY[event.arg0 - 56]
             else:
                 continue
             row[key] = event.arg1 / 1000 if key.endswith("_ms") else event.arg1
@@ -245,7 +358,7 @@ def frame_profile(events: list[Event], rows: list[dict], integrity: dict) -> tup
     data = list(frames.values())
     for row in data:
         if row["profile_complete"]:
-            for key in CPU_FIELDS + dependencies + drain_counts:
+            for key in CPU_FIELDS + dependencies + drain_counts + RAW_COUNTS + RAW_BOUNDARY:
                 row.setdefault(key, 0)
     eligible = [row for row in data if row["profile_complete"] and not row["excluded"]]
     complete = (integrity["complete"] and not any(integrity["dropped"].values())
@@ -266,7 +379,7 @@ def frame_profile(events: list[Event], rows: list[dict], integrity: dict) -> tup
             },
             "p95_ms": percentile(sorted(row["frame_ms"] for row in group), .95),
             "per_frame_mean": {key: statistics.mean(row[key] for row in group)
-                               for key in CPU_FIELDS + dependencies + drain_counts + ("guest_fence_wait_ms",)},
+                               for key in CPU_FIELDS + dependencies + drain_counts + RAW_COUNTS + RAW_BOUNDARY + ("guest_fence_wait_ms",)},
             "gpu_samples_by_frame_time": {
                 label: {
                     key.removesuffix("_sample_ms"): {"total_ms": sum(row.get(key, 0) for row in sample),
@@ -282,7 +395,7 @@ def frame_profile(events: list[Event], rows: list[dict], integrity: dict) -> tup
                   "profiled_frames": sum(row["profile_complete"] for row in data),
                   "gpu_samples_without_flip": orphan_gpu_samples, "phases": cohorts,
                   "slowest_frames": worst,
-                  "columns": list(CPU_FIELDS + dependencies + drain_counts + gpu_fields + gpu_counts + ("profile_complete",
+                  "columns": list(CPU_FIELDS + dependencies + drain_counts + RAW_COUNTS + RAW_BOUNDARY + gpu_fields + gpu_counts + ("profile_complete",
                       "gpu_samples", "guest_fence_wait_ms", "guest_fence_waits_ended"))}
 
 
@@ -292,7 +405,7 @@ def export(run_dir: Path) -> dict:
     rows, phase_markers = frame_rows(events)
     # Report source status alongside the data even if the writer reached EOF
     # after a watchdog exit. Runs with lost phase/capture markers are suspect.
-    summary = {"schema_version": 1, "run_id": manifest["run_id"], "mode": manifest["mode"],
+    summary = {"schema_version": 2, "run_id": manifest["run_id"], "mode": manifest["mode"],
                "status": manifest["status"], "integrity": integrity,
                "phase_markers": phase_markers, "phases": summarize(rows)}
     frame_columns = (
@@ -302,9 +415,28 @@ def export(run_dir: Path) -> dict:
         writer = csv.DictWriter(stream, fieldnames=frame_columns)
         writer.writeheader()
         writer.writerows(rows)
-    (run_dir / "frame-summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    if any(event.kind in (THREAD_CPU, GUEST_PC) for event in events):
+        memory_map = run_dir / "memory-map.json"
+        sections = []
+        if memory_map.is_file():
+            mapping = json.loads(memory_map.read_text(encoding="utf-8-sig"))
+            if mapping.get("xbe_sha256") == manifest.get("xbe_sha256"):
+                sections = [{"name": section["name"], "virtual_addr": section["guest_va"],
+                             "virtual_size": number(section["end_exclusive"]) - number(section["guest_va"]),
+                             "executable": section["declared_executable"]}
+                            for section in mapping["ranges"] if section["source"] == "xbe_section_table"]
+        summary["diagnostic_windows"] = diagnostic_windows(events, rows, sections)
+        summary["guest_pc_sections_available"] = bool(sections)
+    if any(event.kind == OVERLAY for event in events):
+        summary["overlay_pacing"] = summarize([
+            {**row, "excluded": "" if row["excluded"] == "overlay" else row["excluded"]}
+            for i, row in enumerate(rows)
+            if i and row["excluded"] == rows[i - 1]["excluded"] == "overlay"
+            and row["segment"] == rows[i - 1]["segment"] and row["frame_ms"] is not None
+        ])
     if rows and any(event.kind == PROFILE_FRAME for event in events):
         profiled, profile_summary = frame_profile(events, rows, integrity)
+        profile_summary["depth_dependencies"] = depth_dependencies(events, rows)
         columns = profile_summary.pop("columns")
         with (run_dir / "frame-profile.csv").open("w", newline="", encoding="utf-8") as stream:
             writer = csv.DictWriter(stream, fieldnames=list(frame_columns) + columns)
@@ -312,6 +444,7 @@ def export(run_dir: Path) -> dict:
             writer.writerows(profiled)
         (run_dir / "profile-summary.json").write_text(
             json.dumps(profile_summary, indent=2) + "\n", encoding="utf-8")
+    (run_dir / "frame-summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     return summary
 
 
@@ -330,7 +463,8 @@ def compare(reference: Path, candidate: Path) -> dict:
     changed = {}
     for key in ("mode", "guest_pc_tracking", "xbe_sha256", "embedded_shader_sha256",
                 "title_revision", "runtime_revision", "runtime_pin", "executable_sha256",
-                "nv2a_raster_source_sha256", "atv_archive_sha256", "raster_adapter"):
+                "nv2a_raster_source_sha256", "atv_archive_sha256", "raster_adapter", "cpu",
+                "toolchain", "gpu_driver"):
         values = [before_manifest.get(key), after_manifest.get(key)]
         if values[0] != values[1]:
             changed[key] = values
@@ -343,7 +477,7 @@ def compare(reference: Path, candidate: Path) -> dict:
         a, b = before["phases"].get(phase), after["phases"].get(phase)
         delta = None
         if a and b:
-            delta = {k: b[k] - a[k] for k in ("mean_fps", "median_ms", "p95_ms", "p99_ms")
+            delta = {k: b[k] - a[k] for k in ("mean_fps", "median_ms", "p95_ms", "p99_ms", "max_ms")
                      if a[k] is not None and b[k] is not None}
         phases[phase] = {"reference": a, "candidate": b, "delta": delta}
     return {"reference": before["run_id"], "candidate": after["run_id"], "warnings": warnings,

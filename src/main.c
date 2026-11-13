@@ -262,6 +262,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
     }
     wchar_t *trace_path = _wgetenv(L"QPR2_FRAME_TRACE_PATH");
     if (trace_path && *trace_path) {
+        xbox_frame_trace_thread(XBOX_TRACE_GUEST_MAIN);
+#if defined(RECOMP_ENABLE_GUEST_PC)
+        xbox_frame_trace_main_pc(&g_recomp_pc);
+#endif
         if (xbox_frame_trace_start(trace_path))
             xbox_frame_trace_note(XBOX_TRACE_TITLE, XBOX_TRACE_PHASE, 0, XBOX_PHASE_BOOT, 0, 0);
         else
