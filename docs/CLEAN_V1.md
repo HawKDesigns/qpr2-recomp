@@ -4,6 +4,8 @@ Use a separate Windows checkout for this branch and the last tested v126
 reference. The clean branch pins a runtime that descends from upstream
 XboxRecomp v0.17.0 (`343b6d8901723b37ce568b2418c5df4e1fe1d223`).
 Keep the matching retail executable, assets, saves and generated shaders local.
+See the [clean v1 requirements audit](CLEAN_V1_AUDIT.md) for evidence and
+open acceptance items.
 
 ## Port boundaries
 
@@ -41,8 +43,8 @@ and should be kept outside a benchmark.
 
 ## Accepted Windows baseline
 
-Benchmark run `20261112-150755-634-9fe8a99e` used title commit `45656bf`
-and the v126 embedded shader hash. The user completed a race, reported
+Benchmark run `20261112-150755-634-9fe8a99e` followed the `45656bf` race
+callback fix and reported the v126 embedded shader hash. The user completed a race, reported
 performance on par with v126, and confirmed that ATV and rider shadows
 rendered during the race. The 53 five-second reports from the first
 sustained in-race slowdown onward ranged from 12.6 to 29.4 FPS, with a
@@ -58,10 +60,10 @@ The Dunes comparison was accepted on November 13. Both follow-up archives
 report native ROV, `ready_mask=7`, accepted raw GPU draws and window close.
 Run `20261113-015231-241-e8b6f413` (`0`) was mostly with visible AI and had
 clear track near the end. Run `20261113-015731-850-dba11550` (`1`) was mostly
-behind the pack with no visible AI and rejoined it near the end. The second
-run's manifest records the requested switch, and its renderer log has no
-`GPU-READONLY-DEPTH` counters to establish activation. Leave the experiment
-off while finishing the v1 debugger and logging requirements.
+behind the pack with no visible AI and rejoined it near the end. The player
+confirmed the XboxRecomp update had yet to be copied into the ZIP install.
+Leave the experiment off while finishing the v1 debugger and logging
+requirements.
 
 ## Debugger foundations
 
