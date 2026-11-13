@@ -103,6 +103,12 @@ See [PUBLISHING.md](PUBLISHING.md) for validation and troubleshooting.
 
 ## Run clean v1
 
+On Windows, double-click **`QPR2 Launcher.bat`** in the project root. The
+launcher uses the same build script as PowerShell. Monitor selection, button
+mapping, and stick and trigger settings are built into the game. See the
+[launcher guide](launcher/README.md) for settings and upgrades from the
+standalone ZIP.
+
 ```powershell
 .\rebuild-and-run.ps1
 .\rebuild-and-run.ps1 -Mode Benchmark

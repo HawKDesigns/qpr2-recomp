@@ -4,10 +4,12 @@
 #include "recomp/gen/recomp_types.h"
 #include "usb/usb_gamepad.h"
 #include "input/xinput_xbox.h"
+#include "qpr2_input_config.h"
 static XBOX_INPUT_STATE host_state;
 DWORD xbox_InputGetState(DWORD port, XBOX_INPUT_STATE *state)
 { assert(port == 0); *state = host_state; return 0; }
 int xbox_FramebufferKeyDown(int vk) { (void)vk; return 0; }
+DWORD GetTickCount(void) { return 0; }
 ptrdiff_t g_xbox_mem_offset;
 uint32_t g_xbox_code_lo, g_xbox_code_hi;
 RECOMP_TLS uint32_t g_eax, g_ecx, g_edx, g_esp, g_ebx, g_esi, g_edi, g_ebp, g_seh_ebp;
@@ -63,7 +65,42 @@ int main(void)
         assert(MEM8(o + 0x14) == 0x10 && MEM8(o + 0x16) == 255);
         assert(MEM16(o + 0x1e) == 16000 && wakes == 3);
     }
+
+    setenv("QPR2_PAD_MAP_B", "a", 1);
+    setenv("QPR2_PAD_MAP_A", "none", 1);
+    setenv("QPR2_PAD_MAP_X", "y", 1);
+    setenv("QPR2_PAD_DZ_L", "25", 1);
+    setenv("QPR2_PAD_INVERT_LY", "1", 1);
+    qpr2_input_config_init();
+    assert(g_qpr2_input_cfg.active);
+
+    memset((void *)XBOX_PTR(o + 0x34), 0, QPR2_PAD_BLOCK_SIZE);
+    MEM8(o + 0x36) = 255;
+    MEM16(o + 0x3e) = 16000;
+    invoke(o);
+    assert(MEM8(o + 0x16) == 0 && MEM8(o + 0x17) == 255 && wakes == 4);
+    assert((int16_t)MEM16(o + 0x1e) > 10000 && (int16_t)MEM16(o + 0x1e) < 10800);
+
+    memset((void *)XBOX_PTR(o + 0x34), 0, QPR2_PAD_BLOCK_SIZE);
+    MEM8(o + 0x39) = 31;
+    invoke(o);
+    assert(MEM8(o + 0x18) == 0 && wakes == 4);
+
+    MEM8(o + 0x34) = 0x10;
+    MEM16(o + 0x40) = (uint16_t)(int16_t)-20000;
+    invoke(o);
+    assert(MEM8(o + 0x14) == 0x10 && wakes == 5);
+    assert((int16_t)MEM16(o + 0x20) > 15000 && (int16_t)MEM16(o + 0x20) < 16500);
+
+    /* A short report must not remap or rewrite bytes past the report. */
+    MEM32(o + 0x66) = 12;
+    memset((void *)XBOX_PTR(o + 0x34), 0, QPR2_PAD_BLOCK_SIZE);
+    MEM8(o + 0x36) = 255;
+    MEM16(o + 0x20) = 0x4321;
+    invoke(o);
+    assert(MEM8(o + 0x16) == 255 && MEM8(o + 0x17) == 0 && wakes == 6);
+    assert(MEM16(o + 0x20) == 0x4321);
     free(memory);
-    puts("PASS: Start/A report publication, analog threshold, stick copy, neutral/short reports, saved registers and guest stack");
+    puts("PASS: default report publication, remap, deadzone, inversion, retail threshold, short reports, saved registers and guest stack");
     return 0;
 }

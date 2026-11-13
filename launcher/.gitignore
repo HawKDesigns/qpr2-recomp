@@ -1,0 +1,8 @@
+# Per-user launcher files. This file lives in launcher/ so the repository's own .gitignore is never modified.
+launcher.settings.json
+launcher.state.json
+launcher.log
+assets/
+.ui-profile/
+backups/
+host-integration/

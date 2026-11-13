@@ -19,6 +19,8 @@ extern void qpr2_mesh_args_dump(void);
 
 #include <xbox/xboxrecomp.h>
 #include "qpr2_build_config.h"
+#include "qpr2_display.h"
+#include "qpr2_input_config.h"
 
 extern RECOMP_TLS uint32_t g_eax, g_ecx, g_edx, g_esp;
 extern RECOMP_TLS uint32_t g_ebx, g_esi, g_edi;
@@ -194,6 +196,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
         fprintf(stderr, "[BOOT] Renderer or callback verification failed; stopping before guest startup.\n");
         return 4;
     }
+    qpr2_input_config_init();
     printf("Title ID: %s | entry: 0x%08X | XBE SHA-256: %s\n",
            QPR2_TITLE_ID_TEXT, QPR2_ENTRY_POINT, QPR2_XBE_SHA256);
 
@@ -257,6 +260,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
                 "[BOOT] flat dispatch unavailable; using binary-search dispatch\n");
     }
     xbox_WatchdogStart();
+    qpr2_display_start();
 
     printf("[BOOT] runtime initialized; entering recompiled code\n");
     xbe_entry_point();

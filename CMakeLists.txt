@@ -61,6 +61,8 @@ add_executable(${PROJECT_NAME} WIN32
     src/qpr2_menu_probe.c
     src/qpr2_ui_trace.c
     src/qpr2_xmv_probe.c
+    src/qpr2_input_config.c
+    src/qpr2_display.c
     ${RECOMP_GEN_SOURCES}
 )
 
@@ -72,6 +74,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     xinput
     winmm
     dbghelp
+    user32
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE

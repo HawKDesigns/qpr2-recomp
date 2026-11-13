@@ -5,6 +5,7 @@
 #include "recomp/gen/recomp_types.h"
 
 #include "recomp/gen/recomp_funcs.h"
+#include "qpr2_input_config.h"
 
 void qpr2_recovered_001A7D43(void);
 
@@ -34,6 +35,15 @@ void qpr2_recovered_00012B50(void);
 
 #include <stdio.h>
 #include <stdlib.h>
+
+static void qpr2_input_apply_options(uint32_t payload)
+{
+    uint8_t block[QPR2_PAD_BLOCK_SIZE];
+    for (unsigned i = 0; i < sizeof block; ++i) block[i] = MEM8(payload + i);
+    qpr2_input_config_apply(&g_qpr2_input_cfg, block);
+    for (unsigned i = 0; i < sizeof block; ++i) MEM8(payload + i) = block[i];
+}
+
 static void qpr2_input_publish_probe(uint32_t payload)
 {
     static int on = -1, seen;
@@ -59,6 +69,7 @@ static void qpr2_input_publish_probe(uint32_t payload)
 void qpr2_recovered_001A7D43(void)
 {
     uint32_t ebp = 0;
+    uint32_t report_size;
     ebp = g_ebp;  /* frameless: caller's frame */
     int _flags = 0; /* fallback flag var */
     uint32_t _fa = 0, _fb = 0;
@@ -69,7 +80,7 @@ void qpr2_recovered_001A7D43(void)
 loc_001A7D43: ;
     RECOMP_PC(0x001A7D43u);
     eax = ecx;
-    ecx = MEM32(eax + 0x66);
+    report_size = ecx = MEM32(eax + 0x66);
     PUSH32(esp, ebx);
     ebx = 0; /* xor self */
     _fa = (uint32_t)(ebx) & 0xFFFFFFFFu; _fas = (int32_t)(int32_t)(_fa); /* xor result */
@@ -118,6 +129,9 @@ loc_001A7D53: ;
     POP32(esp, edi);
     eax = edx + 2;
     POP32(esp, esi);
+    /* Apply options to a complete XID pad report before the retail threshold. */
+    if (g_qpr2_input_cfg.active && report_size == QPR2_PAD_BLOCK_SIZE + 2u)
+        qpr2_input_apply_options(edx);
 
 loc_001A7D73: ;
     RECOMP_PC(0x001A7D73u);

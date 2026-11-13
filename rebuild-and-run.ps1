@@ -390,7 +390,10 @@ function Invoke-Qpr2BuildAndRun {
                 [Environment]::SetEnvironmentVariable($name, $settings[$name])
             }
         }
-        Get-ChildItem Env: | Where-Object Name -like "RECOMP_*" |
+        Get-ChildItem Env: | Where-Object {
+            $_.Name -like "RECOMP_*" -or $_.Name -like "QPR2_PAD_*" -or
+            $_.Name -in "QPR2_MONITOR", "QPR2_FULLSCREEN"
+        } |
             Sort-Object Name | ForEach-Object { $effective[$_.Name] = $_.Value }
         $manifest["environment"] = $effective
         $manifest["timeout_seconds"] = $timeout
