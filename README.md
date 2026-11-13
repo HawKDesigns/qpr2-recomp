@@ -124,9 +124,27 @@ after the build.
 
 Each attempt writes logs and a `run.json` manifest under
 `logs/clean-v1-*/`. A completed run also creates a time-stamped results ZIP.
-For a clean performance comparison, use the same Dunes1 setup and note where
-you drove with visible AI and where the track ahead was clear. Keep F8 capture
-and other verbose diagnostics outside measured intervals.
+Benchmark and Debug runs include a compact frame trace, `frames.csv`, and
+`frame-summary.json`. The export distinguishes completed NV2A flips, successful
+framebuffer handoffs, and distinct frames drawn by the host. Host draw timing
+describes the GDI/D3D11 presenter, independent of display scanout. The trace also
+records guest display ticks and emulated vblanks.
+
+Use the same Dunes1 setup across runs. With the game window focused, mark
+countdown with **F5**, clear track ahead with **F6**, and following visible AI
+with **F7**. Press **F4** when those labels no longer apply. The report
+excludes intervals that cross phase changes or overlap F8 capture, and shows
+missing records. Use
+`-NoFrameTrace` for a same-build recorder overhead comparison.
+
+```powershell
+py -3 tools/qpr2_frame_trace.py compare logs/clean-v1-REFERENCE logs/clean-v1-CANDIDATE
+```
+
+Failed runs with runtime logs include `failure.json` with available guest
+registers, stack words, watchdog FIFO pointers and active waits. The export
+resolves guest addresses against the matching symbol catalog when available
+and adds the last recorded flip, handoff and draw from the frame trace.
 
 The launcher requests native ROV and raw GPU geometry. Confirm what the
 runtime actually admitted in the logs. Runtime defaults are in

@@ -29,7 +29,7 @@ static Nv2aVshOutput point(float x,float y) {
  Nv2aVshOutput p={0};p.pos[0]=x;p.pos[1]=y;p.pos[3]=1;
  p.d0[0]=p.d0[3]=1;return p;
 }
-void xbox_FramebufferWindowPresentPixels(const uint32_t *p,uint32_t w,uint32_t h) {(void)p;(void)w;(void)h;}
+void xbox_FramebufferWindowPresentPixels(const uint32_t *p,uint32_t w,uint32_t h,uint32_t id) {(void)id;(void)p;(void)w;(void)h;}
 int main(void) {
  const float a[2]={0,0},b[2]={8,0},c[2]={8,8},d[2]={0,8};
  for(int reverse=0;reverse<2;reverse++) {

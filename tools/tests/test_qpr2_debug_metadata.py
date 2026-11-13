@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from qpr2_debug_metadata import export_memory_map, export_symbols, lookup
+from qpr2_debug_metadata import export_failure, export_memory_map, export_symbols, lookup
 
 
 class DebugMetadataTests(unittest.TestCase):
@@ -96,6 +96,47 @@ xbox_MemoryLayoutInit: complete
         self.write("run/run.json", {**run, "xbe_sha256": "f" * 64})
         with self.assertRaisesRegex(ValueError, "different SHA-256"):
             export_memory_map(self.analysis, self.root / "run")
+
+
+    def test_failure_exports_bounded_symbolized_watchdog_context(self):
+        self.write("run/run.json", {"run_id": "watchdog", "status": "failed", "exit_code": 3,
+                                    "guest_pc_tracking": True, "xbe_sha256": self.digest})
+        self.write("run/guest-symbols.json", {"xbe_sha256": self.digest, "functions": [{
+            "guest_va": "0x00010000", "end_exclusive": "0x00010080", "display_name": "fixture callback",
+        }]})
+        self.write("run/run.stderr.log", """[WATCHDOG] no exit after 30s; guest pc=0x00010004 esp=0x00780000
+  regs: eax=00000020 ecx=00000000 edx=00000000 ebx=00000000 esi=00000000 edi=00000000
+  recent ICALL targets: 00010000 00000000 00011000
+[WAIT-ACTIVE] thread=2 ordinal=123 caller=00010008 object=48000004 host=00000001 elapsed_ms=20000
+  NV2A USER  PUT=00000100 GET=00000080
+  NV2A PFIFO PUT=00000050 GET=00000040 REF=00000010 SUBR=00000000
+    GS 00780000 00010000
+""")
+        report = export_failure(self.root / "run")
+        self.assertEqual(report["reason"], "watchdog")
+        self.assertEqual(report["guest_pc"]["symbol"], "fixture callback")
+        self.assertEqual(report["guest_registers"]["eax"], "0x00000020")
+        self.assertEqual(report["fifo"]["user_get"], "0x00000080")
+        self.assertEqual(report["active_waits"][0]["elapsed_ms"], 20000)
+        self.assertEqual(len(report["recent_indirect_calls"]), 2)
+        self.assertEqual(report["stack"][0]["word"], "0x00010000")
+
+    def test_failure_without_guest_pc_and_clean_exit(self):
+        self.write("run/run.json", {"run_id": "fault", "status": "failed", "exit_code": 4})
+        self.write("run/run.stderr.log", """[CRASH] access violation: read at host=0x01 fault=0x02
+  guest regs: eax=00000020 ecx=00000000 edx=00000000 ebx=00000000
+              esi=00000000 edi=00000000 esp=00780000
+  guest pc: 00000000
+  host symbol: example+0xF
+""")
+        report = export_failure(self.root / "run")
+        self.assertEqual(report["reason"], "access_violation")
+        self.assertIsNone(report["guest_pc"])
+        self.assertEqual(report["guest_registers"]["esp"], "0x00780000")
+        self.assertEqual(report["host_symbol"], "example+0xF")
+        self.write("run/run.json", {"run_id": "clean", "status": "exited", "exit_code": 0})
+        self.write("run/run.stderr.log", "")
+        self.assertEqual(export_failure(self.root / "run"), {})
 
 
 if __name__ == "__main__":

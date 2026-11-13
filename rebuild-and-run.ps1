@@ -4,7 +4,8 @@ param(
     [string]$Mode = "Play",
     [ValidateRange(0, 86400)]
     [int]$TimeoutSeconds = 0,
-    [switch]$BuildOnly
+    [switch]$BuildOnly,
+    [switch]$NoFrameTrace
 )
 
 $ErrorActionPreference = "Stop"
@@ -144,7 +145,9 @@ function Get-Qpr2RuntimeSource([string]$PinnedRevision, [bool]$TitleIsArchive) {
     }
 
     $rendererHeader = Join-Path $runtimePath "src/kernel/nv2a_overlay_revision.h"
+    $frameTraceSource = Join-Path $runtimePath "src/platform/frame_trace.c"
     if (-not (Test-Path -LiteralPath $rendererHeader -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $frameTraceSource -PathType Leaf) -or
         -not (Select-String -LiteralPath $rendererHeader -Quiet -Pattern '^#define QPR2_RENDERER_REVISION 1701u$') -or
         -not (Select-String -LiteralPath $lifter -Quiet -SimpleMatch '--runtime-instruction-hooks')) {
         throw "The XboxRecomp source in $runtimePath is incompatible. Use the QPR2 runtime archive for $PinnedRevision."
@@ -365,6 +368,12 @@ function Invoke-Qpr2BuildAndRun {
     }
     $manifest["shader_status"] = $shaderStatus
     $manifest["embedded_shader_sha256"] = $embeddedHash
+    $exe = Join-Path $buildDir "Release\qpr2_recomp.exe"
+    $manifest["executable_sha256"] = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+    $manifest["nv2a_raster_source_sha256"] = (Get-FileHash -LiteralPath (Join-Path $runtimePath "src/kernel/nv2a_gpu_raster.c") -Algorithm SHA256).Hash.ToLowerInvariant()
+    if (Test-Path -LiteralPath "game/ATV.zip" -PathType Leaf) {
+        $manifest["atv_archive_sha256"] = (Get-FileHash -LiteralPath "game/ATV.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
     $manifest["status"] = "built"
     $manifest | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 $manifestPath
     if ($BuildOnly) { return }
@@ -375,6 +384,11 @@ function Invoke-Qpr2BuildAndRun {
     if ($Mode -ne "Play") { $settings += $runtimeSettings.Benchmark }
     if ($Mode -eq "Debug") { $settings += $runtimeSettings.Debug }
     $settings["RECOMP_GPU_CAPTURE"] = Join-Path $runLogDir "gpu-capture.bin"
+    if ($Mode -ne "Play" -and -not $NoFrameTrace) {
+        $settings["QPR2_FRAME_TRACE_PATH"] = Join-Path $runLogDir "frame-trace.bin"
+    } else {
+        $settings["QPR2_FRAME_TRACE_PATH"] = $null
+    }
     if ($timeout -gt 0) { $settings["RECOMP_WATCHDOG_SECS"] = [string]$timeout }
 
     $previous = @{}
@@ -386,7 +400,7 @@ function Invoke-Qpr2BuildAndRun {
     try {
         foreach ($name in ($settings.Keys | Sort-Object)) {
             $previous[$name] = [Environment]::GetEnvironmentVariable($name)
-            if ($null -eq $previous[$name] -or $name -eq "RECOMP_GPU_CAPTURE") {
+            if ($null -eq $previous[$name] -or $name -in "RECOMP_GPU_CAPTURE", "QPR2_FRAME_TRACE_PATH") {
                 [Environment]::SetEnvironmentVariable($name, $settings[$name])
             }
         }
@@ -396,11 +410,12 @@ function Invoke-Qpr2BuildAndRun {
         } |
             Sort-Object Name | ForEach-Object { $effective[$_.Name] = $_.Value }
         $manifest["environment"] = $effective
+        $manifest["frame_trace_requested"] = [bool]$settings["QPR2_FRAME_TRACE_PATH"]
         $manifest["timeout_seconds"] = $timeout
         $manifest["status"] = "running"
         $manifest | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 $manifestPath
         Write-Host "Starting QPR2 clean v1. Live logs are in $tempLogDir"
-        $process = Start-Process -FilePath (Join-Path $buildDir "Release\qpr2_recomp.exe") `
+        $process = Start-Process -FilePath $exe `
             -WorkingDirectory $root -PassThru -RedirectStandardOutput $tempStdout -RedirectStandardError $tempStderr
         # Keep the original process handle open through ExitCode, including
         # when the window thread terminates the process before Refresh().
@@ -441,6 +456,19 @@ function Invoke-Qpr2BuildAndRun {
             Copy-Item "xbox_kernel.log" (Join-Path $runLogDir "kernel.log")
         }
         $manifest["finished_utc"] = [DateTime]::UtcNow.ToString("o")
+        if (Test-Path -LiteralPath $tempStderr -PathType Leaf) {
+            $watchdog = Select-String -LiteralPath $tempStderr -Pattern '^\[WATCHDOG\]' | Select-Object -First 1
+            $manifest["watchdog_fired"] = [bool]$watchdog
+            $adapter = Select-String -LiteralPath $tempStderr -Pattern '^\[GPU-RASTER\] hardware adapter=(.+) feature_level=([0-9A-F]+) dedicated_mib=(\d+)' | Select-Object -First 1
+            if ($adapter) {
+                $groups = $adapter.Matches[0].Groups
+                $manifest["raster_adapter"] = @{
+                    name = $groups[1].Value
+                    feature_level = $groups[2].Value
+                    dedicated_mib = [long]$groups[3].Value
+                }
+            }
+        }
         $manifest | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 $manifestPath
     }
 
@@ -449,6 +477,21 @@ function Invoke-Qpr2BuildAndRun {
         $map = Join-Path $runLogDir "memory-map.json"
         $exitCode = Invoke-Qpr2Python -Arguments @("tools/qpr2_debug_metadata.py", "memory-map", "--run", $runLogDir, "--output", $map) -LogFile $mapLog
         if ($exitCode -ne 0) { Write-Warning "Memory map export exited $exitCode. See $mapLog." }
+    }
+    $tracePath = Join-Path $runLogDir "frame-trace.bin"
+    if (Test-Path -LiteralPath $tracePath -PathType Leaf) {
+        $traceLog = Join-Path $runLogDir "frame-trace.log"
+        $exitCode = Invoke-Qpr2Python -Arguments @("tools/qpr2_frame_trace.py", "export", $runLogDir) -LogFile $traceLog
+        if ($exitCode -ne 0) { Write-Warning "Frame trace export exited $exitCode. See $traceLog." }
+    } elseif ($manifest["frame_trace_requested"]) {
+        Write-Warning "Frame trace was requested but no trace file was created."
+    }
+    if ((Test-Path -LiteralPath (Join-Path $runLogDir "run.stderr.log")) -and
+        ($manifest["status"] -ne "exited" -or $manifest["watchdog_fired"])) {
+        $failure = Join-Path $runLogDir "failure.json"
+        $failureLog = Join-Path $runLogDir "failure.log"
+        $exitCode = Invoke-Qpr2Python -Arguments @("tools/qpr2_debug_metadata.py", "failure", "--run", $runLogDir, "--output", $failure) -LogFile $failureLog
+        if ($exitCode -ne 0) { Write-Warning "Failure context export exited $exitCode. See $failureLog." }
     }
     Update-Qpr2MaterialFixture
     $results = Join-Path $root "logs\qpr2-clean-v1-results-$runId.zip"

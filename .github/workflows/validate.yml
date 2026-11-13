@@ -16,6 +16,7 @@ jobs:
           python3 -m py_compile
           tools/qpr2_pipeline.py
           tools/qpr2_debug_metadata.py
+          tools/qpr2_frame_trace.py
           tools/bootstrap_xboxrecomp.py
           tools/tests/test_qpr2_pipeline.py
       - name: Run unit tests

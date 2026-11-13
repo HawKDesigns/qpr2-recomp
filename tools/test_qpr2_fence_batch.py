@@ -51,7 +51,7 @@ ptrdiff_t xbox_GetMemoryOffset(void){return (ptrdiff_t)ram;}
 uint32_t xbox_ContiguousAllocatedBytes(void){return XBOX_CONTIG_SIZE;}
 void xbox_FramebufferWindowSet(uint32_t a,uint32_t b){(void)a;(void)b;}
 void xbox_FramebufferWindowStart(void){}
-void xbox_FramebufferWindowPresentPixels(const uint32_t*p,uint32_t w,uint32_t h){(void)p;(void)w;(void)h;}
+void xbox_FramebufferWindowPresentPixels(const uint32_t*p,uint32_t w,uint32_t h,uint32_t id){(void)id;(void)p;(void)w;(void)h;}
 void xbox_FramebufferWindowFrameStats(uint32_t n){(void)n;}
 void xbox_Nv2aFrameCounterFlip(void){}
 static int fence_readable(uint32_t a,uint32_t n){return a>=0x10000 && ((uint64_t)a+n<=0x4000000ull || (a>=0x80000000 && (uint64_t)a+n<=0x84000000ull));}

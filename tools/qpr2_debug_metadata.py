@@ -209,6 +209,83 @@ def lookup(path: Path, query: str) -> list[dict]:
     return sorted(matches, key=lambda row: number(row["end_exclusive"]) - number(row["guest_va"]))
 
 
+def export_failure(run_dir: Path) -> dict:
+    manifest = read_json(run_dir / "run.json")
+    log = read_log(run_dir / "run.stderr.log")
+    fault = re.search(r"^\[CRASH\] access violation: (\w+) at host=(0x[0-9A-F]+) fault=(0x[0-9A-F]+)", log, re.M)
+    watchdog = re.search(r"^\[WATCHDOG\] no exit after (\d+)s; guest pc=(0x[0-9A-F]+) esp=(0x[0-9A-F]+)", log, re.M)
+    if not (fault or watchdog or manifest.get("status") in ("failed", "timed_out", "exit_status_unavailable")):
+        return {}
+    start = watchdog.start() if watchdog else fault.start() if fault else len(log)
+    excerpt = log[start:]
+    symbol_path = run_dir / "guest-symbols.json"
+    catalog = read_json(symbol_path) if symbol_path.is_file() else {}
+    functions = catalog.get("functions", []) if catalog.get("xbe_sha256") == manifest.get("xbe_sha256") else []
+    exact = {number(row["guest_va"]): row for row in functions}
+    ranges = [(number(row["guest_va"]), number(row["end_exclusive"]), row) for row in functions
+              if row.get("end_exclusive") is not None]
+
+    def resolve(address: str) -> dict:
+        value = int(address, 16)
+        row = exact.get(value)
+        if row is None:
+            row = min((item for item in ranges if item[0] <= value < item[1]),
+                      key=lambda item: item[1] - item[0], default=(0, 0, None))[2]
+        return {"guest_va": va(value), "symbol": row["display_name"] if row else None}
+
+    result = {
+        "schema_version": 1, "run_id": manifest["run_id"], "status": manifest["status"],
+        "exit_code": manifest.get("exit_code"), "guest_pc_tracking": manifest.get("guest_pc_tracking"),
+        "reason": "watchdog" if watchdog else "access_violation" if fault else manifest["status"],
+    }
+    if watchdog:
+        result.update(timeout_seconds=int(watchdog[1]), guest_esp=watchdog[3],
+                      guest_pc=resolve(watchdog[2]) if int(watchdog[2], 16) else None)
+    elif fault:
+        pc = re.search(r"^  guest pc: ([0-9A-F]{8})$", excerpt, re.M)
+        host_symbol = re.search(r"^  host symbol: (.+)$", excerpt, re.M)
+        result.update(access=fault[1], host_pc=fault[2], fault_address=fault[3],
+                      host_symbol=host_symbol[1] if host_symbol else None,
+                      guest_pc=resolve(pc[1]) if pc and int(pc[1], 16) else None)
+
+    regs = re.search(r"^ +(?:guest )?regs: (.+(?:\n +esi=[^\n]+)?)", excerpt, re.M)
+    if regs:
+        result["guest_registers"] = {name: va(int(value, 16)) for name, value in
+                                     re.findall(r"(\w+)=([0-9A-F]{8})", regs[1])}
+    icalls = re.search(r"^  recent ICALL targets:((?: [0-9A-F]{8})+)", excerpt, re.M)
+    if icalls:
+        result["recent_indirect_calls"] = [resolve(address) for address in icalls[1].split() if int(address, 16)]
+    result["stack"] = [{"slot": va(int(slot, 16)), "word": va(int(word, 16))}
+                       for slot, word in re.findall(r"^ +(?:GS )?([0-9A-F]{8}):? ([0-9A-F]{8})$",
+                                                   excerpt, re.M)[:64]]
+    fifo = re.search(r"^  NV2A USER  PUT=([0-9A-F]+) GET=([0-9A-F]+)\s+"
+                     r"NV2A PFIFO PUT=([0-9A-F]+) GET=([0-9A-F]+) REF=([0-9A-F]+) SUBR=([0-9A-F]+)",
+                     excerpt, re.M)
+    if fifo:
+        result["fifo"] = dict(zip(("user_put", "user_get", "pfifo_put", "pfifo_get", "ref", "subroutine"),
+                                  (va(int(value, 16)) for value in fifo.groups())))
+    waits = re.findall(r"^\[WAIT-ACTIVE\] thread=(\d+) ordinal=(\d+) caller=([0-9A-F]+) "
+                       r"object=([0-9A-F]+) host=\S+ elapsed_ms=(\d+)", excerpt, re.M)
+    result["active_waits"] = [{"thread": int(thread), "ordinal": int(ordinal), "caller": resolve(caller),
+                               "guest_object": va(int(obj, 16)), "elapsed_ms": int(elapsed)}
+                              for thread, ordinal, caller, obj, elapsed in waits[:32]]
+    trace_path = run_dir / "frame-trace.bin"
+    if trace_path.is_file():
+        from qpr2_frame_trace import DRAW, FLIP, HANDOFF, read_trace
+        try:
+            events, integrity = read_trace(trace_path)
+            result["frame_trace_integrity"] = integrity
+            progress = {}
+            for event in events:
+                if event.kind in (FLIP, HANDOFF, DRAW):
+                    label = {FLIP: "completed_flip", HANDOFF: "host_handoff", DRAW: "host_draw"}[event.kind]
+                    progress[label] = {"frame_id": event.frame, "timestamp_ns": event.timestamp}
+            result["frame_progress"] = progress
+        except (OSError, ValueError) as error:
+            result["frame_trace_error"] = str(error)
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -219,6 +296,9 @@ def main() -> int:
     for command in (symbols, memory):
         command.add_argument("--analysis", type=Path, default=ROOT / "analysis")
         command.add_argument("--output", type=Path, required=True)
+    failure = commands.add_parser("failure", help="export observed crash or watchdog context")
+    failure.add_argument("--run", type=Path, required=True)
+    failure.add_argument("--output", type=Path, required=True)
     find = commands.add_parser("lookup", help="search an exported file by hex guest VA or symbol name")
     find.add_argument("file", type=Path)
     find.add_argument("query")
@@ -227,8 +307,15 @@ def main() -> int:
         if args.command == "lookup":
             print(json.dumps(lookup(args.file, args.query), indent=2))
             return 0
-        data = (export_symbols(args.analysis, args.generated, ROOT / "src") if args.command == "symbols"
-                else export_memory_map(args.analysis, args.run))
+        if args.command == "symbols":
+            data = export_symbols(args.analysis, args.generated, ROOT / "src")
+        elif args.command == "memory-map":
+            data = export_memory_map(args.analysis, args.run)
+        else:
+            data = export_failure(args.run)
+            if not data:
+                print("No crash, watchdog, or failed process status in this run.")
+                return 0
         args.output.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         print(f"Wrote {args.output}")
         return 0

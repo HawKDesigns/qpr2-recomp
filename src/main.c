@@ -21,6 +21,7 @@ extern void qpr2_mesh_args_dump(void);
 #include "qpr2_build_config.h"
 #include "qpr2_display.h"
 #include "qpr2_input_config.h"
+#include "platform/frame_trace.h"
 
 extern RECOMP_TLS uint32_t g_eax, g_ecx, g_edx, g_esp;
 extern RECOMP_TLS uint32_t g_ebx, g_esi, g_edi;
@@ -259,12 +260,20 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
         fprintf(stderr,
                 "[BOOT] flat dispatch unavailable; using binary-search dispatch\n");
     }
+    wchar_t *trace_path = _wgetenv(L"QPR2_FRAME_TRACE_PATH");
+    if (trace_path && *trace_path) {
+        if (xbox_frame_trace_start(trace_path))
+            xbox_frame_trace_note(XBOX_TRACE_TITLE, XBOX_TRACE_PHASE, 0, XBOX_PHASE_BOOT, 0, 0);
+        else
+            fprintf(stderr, "[FRAME-TRACE] could not start recorder\n");
+    }
     xbox_WatchdogStart();
     qpr2_display_start();
 
     printf("[BOOT] runtime initialized; entering recompiled code\n");
     xbe_entry_point();
     printf("[BOOT] guest returned\n");
+    xbox_frame_trace_stop();
 
     xbox_OhciReport();
     if (g_apu_state) {

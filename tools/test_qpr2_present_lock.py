@@ -5,7 +5,8 @@ root=Path(__file__).resolve().parents[1]
 s=(root/'third_party/xboxrecomp/src/video/fb_present.c').read_text()
 state=s[s.index('static volatile LONG s_fb_running;'):s.index('/* The last PVIDEO frame shown.')]
 helpers=s[s.index('/* Publish a resolved frame'):s.index('/* Title bar,')]
-shim='''#include <stdint.h>
+shim='''#include "platform/frame_trace.h"
+#include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,23 +32,24 @@ static void *produce(void *unused) {
  (void)unused;uint32_t *p=malloc(640*480*4);assert(p);
  for(uint32_t frame=1;frame<=300;frame++) {
   for(int i=0;i<640*480;i++)p[i]=frame;
-  xbox_FramebufferWindowPresentPixels(p,640,480);
+  xbox_FramebufferWindowPresentPixels(p,640,480,frame);
   if(frame==1)pthread_barrier_wait(&first_frame);
  }
  InterlockedExchange(&done,1);free(p);return NULL;
 }
 int main(void) {
- pthread_t thread;uint32_t *copy=malloc(640*480*4);unsigned reads=0;assert(copy);
- s_fb_running=1;unsetenv("RECOMP_FB_VA");assert(!fb_copy_presented_frame(copy));
+ pthread_t thread;uint32_t *copy=malloc(640*480*4);unsigned reads=0;uint32_t frame_id=0;assert(copy);
+ s_fb_running=1;unsetenv("RECOMP_FB_VA");assert(!fb_copy_presented_frame(copy,&frame_id));
  assert(!pthread_barrier_init(&first_frame,NULL,2));assert(!pthread_create(&thread,NULL,produce,NULL));
  pthread_barrier_wait(&first_frame);
  do {
-  assert(fb_copy_presented_frame(copy));
-  for(int i=0;i<640*480;i++)assert(copy[i]==copy[0]);
+  assert(fb_copy_presented_frame(copy,&frame_id));
+  for(int i=0;i<640*480;i++)assert(copy[i]==frame_id);
   ++reads;
  } while(!InterlockedCompareExchange(&done,1,1));
  assert(!pthread_join(thread,NULL));assert(!pthread_barrier_destroy(&first_frame));
- assert(fb_copy_presented_frame(copy));
+ assert(fb_copy_presented_frame(copy,&frame_id));
+ assert(frame_id==300);
  for(int i=0;i<640*480;i++)assert(copy[i]==300);
  assert(reads);free(copy);free(s_present[0]);free(s_present[1]);
  puts("PASS: actual window handoff/read helpers under concurrent rapid flips; no mixed frames, final frame published");
@@ -55,5 +57,5 @@ int main(void) {
 '''
 with tempfile.TemporaryDirectory() as d:
  source=Path(d)/'test.c';binary=Path(d)/'test';source.write_text(shim+state+helpers+fixture)
- subprocess.run(['gcc','-std=gnu11','-O1','-fsanitize=undefined','-pthread',str(source),'-o',str(binary)],check=True)
+ subprocess.run(['gcc','-std=gnu11','-O1','-fsanitize=undefined','-pthread','-I'+str(root/'third_party/xboxrecomp/src'),str(source),'-o',str(binary)],check=True)
  subprocess.run([str(binary)],check=True)
