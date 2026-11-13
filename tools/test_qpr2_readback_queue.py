@@ -13,9 +13,9 @@ ns = {"__file__": str(fence_test)}
 # Reuse fixture declarations; omit its compiler/runner block.
 exec(compile(source[:source.index("with tempfile.TemporaryDirectory(")], str(fence_test), "exec"), ns)
 api = ns["api"]
-api = api.replace("static HRESULT ID3D11Device_CreateBuffer(", "static unsigned queued_maps, all_maps, copy_calls, fail_queued_map_at, fail_staging_bytes;\nstatic int corrupt_queued_copy;\nstatic int fixture_is_queued(ID3D11Resource*);\nstatic HRESULT ID3D11Device_CreateBuffer(", 1)
-api = api.replace("(void)d;++buffer_creates;", "(void)d;++buffer_creates;if(fail_staging_bytes && s->Usage==D3D11_USAGE_STAGING && s->ByteWidth==fail_staging_bytes)return -1;", 1)
-api = api.replace("(void)c;assert(dst->desc.ByteWidth==src->desc.ByteWidth);", "(void)c;if(dst->desc.Usage==D3D11_USAGE_STAGING)++copy_calls;assert(dst->desc.ByteWidth==src->desc.ByteWidth);", 1)
+api = api.replace("static HRESULT ID3D11Device_CreateBuffer(", "static unsigned queued_maps, all_maps, copy_calls, fail_queued_map_at, fail_staging_bytes, fail_shared_bytes, snapshot_copies;\nstatic int corrupt_queued_copy;\nstatic int fixture_is_queued(ID3D11Resource*);\nstatic HRESULT ID3D11Device_CreateBuffer(", 1)
+api = api.replace("(void)d;++buffer_creates;", "(void)d;++buffer_creates;if(fail_staging_bytes && s->Usage==D3D11_USAGE_STAGING && s->ByteWidth==fail_staging_bytes)return -1;if(fail_shared_bytes && s->ByteWidth==fail_shared_bytes && s->BindFlags==(D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_UNORDERED_ACCESS))return -1;", 1)
+api = api.replace("(void)c;assert(dst->desc.ByteWidth==src->desc.ByteWidth);", "(void)c;if(dst->desc.Usage==D3D11_USAGE_STAGING)++copy_calls;else if(dst->desc.StructureByteStride==8)++snapshot_copies;assert(dst->desc.ByteWidth==src->desc.ByteWidth);", 1)
 api = api.replace("memcpy(dst->data,src->data,src->desc.ByteWidth);", "memcpy(dst->data,src->data,src->desc.ByteWidth);if(corrupt_queued_copy && fixture_is_queued(dst))dst->data[0]^=0x80;", 1)
 api = api.replace("(void)c;if(fail_next_map)", "(void)c;++all_maps;if(fixture_is_queued(b) && ++queued_maps==fail_queued_map_at)return -1;if(fail_next_map)", 1)
 fixture = r'''
@@ -35,7 +35,7 @@ static void reset_queue(void){
  queue_state.depth_available=queue_state.depth_test=queue_state.depth_mask=queue_state.zpass_enable=1;queue_state.depth_func=0x203;
  queue_tri=triangle(16);
  for(unsigned i=0;i<8;i++){memset(ram+colors_at(i),0,1024);for(unsigned at=0;at<256;at++)queue_depths[i][at]=100;}
- all_maps=queued_maps=copy_calls=0;
+ all_maps=queued_maps=copy_calls=snapshot_copies=0;
 }
 static void draw_target(unsigned i){assert(nv_gpu_draw(&queue_state,&queue_tri,1,ram+colors_at(i),queue_depths[i],16,empty_sources)==1);}
 static void tint(uint32_t argb){
@@ -91,6 +91,9 @@ int main(int argc,char **argv){
  setenv("RECOMP_GPU_RASTER","1",1);setenv("RECOMP_GPU_ASYNC","0",1);setenv("RECOMP_GPU_FENCE_BATCH","1",1);setenv("RECOMP_GPU_SLICE_PIPELINE","0",1);
  setenv("RECOMP_GPU_DIAGNOSTIC_COUNTERS",!strcmp(mode,"quiet")?"0":"1",1);
  setenv("RECOMP_GPU_READONLY_DEPTH",!strcmp(mode,"readonly-depth")?"1":"0",1);
+ const int rotate=!strcmp(mode,"rotation") || !strcmp(mode,"rotation-eager");
+ setenv("RECOMP_GPU_ROTATE_SURFACES",rotate?"1":"0",1);
+ if(!strcmp(mode,"rotation-eager"))setenv("RECOMP_GPU_DEFER_READBACK","0",1);
  if(!strcmp(mode,"disabled"))setenv("RECOMP_GPU_READBACK_QUEUE","0",1);else unsetenv("RECOMP_GPU_READBACK_QUEUE");
  if(!strcmp(mode,"gate-corrupt"))corrupt_queued_copy=1;
  if(!strcmp(mode,"gate-map"))fail_queued_map_at=1;
@@ -106,6 +109,16 @@ int main(int argc,char **argv){
   tint(0xFF112233+i*0x10101);draw_target(i);
   assert(all_maps==0 && g.pending_count==i && !MEM(colors_at(0)));
  }
+ assert(g.bridge.rotations==(rotate?4u:0u));
+ assert(snapshot_copies==(rotate?0u:4u));
+ if(rotate){
+  assert(g.bridge.snapshot_bytes_avoided==4u*16*16*8);
+  assert(g.surface.readback && g.surface.srv && g.surface.uav);
+  for(unsigned i=0;i<4;i++){
+   assert(g.pending[i].snapshot.buffer!=g.surface.buffer);
+   assert(!g.pending[i].snapshot.readback);
+  }
+ }
  assert(copy_calls==(g.deferred_readback.enabled && g.bridge.enabled?4u:8u));tint(0xFF667788);draw_target(5);
  assert(all_maps==8 && g.pending_count==1 && MEM(colors_at(0))==0xFF112233);
  NvGpuCount count;assert(nv_gpu_sync(&count)==1 && !g.pending_count);
@@ -114,6 +127,22 @@ int main(int argc,char **argv){
   puts("PASS: depth-read-only binds defer color publication while GPU depth writes, depth clears and overlapping destinations still drain");return 0;
  }
  for(unsigned i=0;i<6;i++)assert(MEM(colors_at(i))==(i==5?0xFF667788:0xFF112233+i*0x10101) && queue_depths[i][0]==10);
+ if(rotate){
+  /* Fail allocation of a replacement surface for a new target size. The
+   * previously accepted pixels still reach RAM via the copy fallback. */
+  reset_queue();queue_state.width=queue_state.height=8;queue_state.pitch=32;
+  queue_tri=triangle(8);
+  draw_target(0);
+  assert(g.surface.srv);
+  fail_shared_bytes=8*8*8;
+  draw_target(1);
+  fail_shared_bytes=0;
+  assert(!g.bridge.rotate_surfaces && g.bridge.enabled && g.readback_queue);
+  assert(g.pending_count==1 && g.pending[0].snapshot.buffer!=g.surface.buffer);
+  assert(nv_gpu_sync(&count)==1 && MEM(colors_at(0))==0xFFFFFFFF && MEM(colors_at(1))==0xFFFFFFFF);
+  puts("PASS: rotated and copied snapshots preserve pixels when allocation falls back");
+  return 0;
+ }
  assert(count.zpass>0 && (g.native_diagnostics?count.pixels>0:!count.pixels));
  puts("PASS: five independent targets retain exact snapshots with zero Maps; bounded queue drains on capacity; immutable snapshots and visibility counts survive GPU-buffer reuse");
  /* Dirty bounds, 16-bit conversion, Morton layouts and row padding. */
@@ -219,7 +248,7 @@ with tempfile.TemporaryDirectory(prefix="qpr2-readback-queue-") as folder:
     (tmp / "test.c").write_text(code)
     exe = tmp / "test"
     subprocess.run(["gcc", "-std=gnu11", "-O1", "-fsanitize=undefined,float-cast-overflow", "-fno-sanitize-recover=all", "-Werror=implicit-function-declaration", "-Werror=incompatible-pointer-types", "-ffunction-sections", "-fdata-sections", "-I" + str(tmp), "-I" + str(root / "tools"), "-I" + str(kernel), "-I" + str(root / "third_party/xboxrecomp/src"), str(tmp / "test.c"), str(kernel / "nv2a_gpu_tiles.c"), str(kernel / "nv2a_vsh_interp.c"), str(kernel / "nv2a_combiner.c"), "-Wl,--gc-sections", "-pthread", "-lm", "-o", str(exe)], check=True)
-    for mode in ["default", "quiet", "disabled", "gate-corrupt", "gate-map", "readonly-depth"]:
+    for mode in ["default", "quiet", "disabled", "gate-corrupt", "gate-map", "readonly-depth", "rotation", "rotation-eager"]:
         print("RUN readback queue " + mode, flush=True)
         subprocess.run([str(exe), mode], cwd=tmp, check=True, timeout=90)
-    print("PASS: all 6 readback queue modes passed")
+    print("PASS: all 8 readback queue modes passed")

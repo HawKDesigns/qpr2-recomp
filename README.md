@@ -152,6 +152,12 @@ runtime actually admitted in the logs. Runtime defaults are in
 `RECOMP_GPU_POINT_BOUNDS=0` restores the prior AABB decision for a same-build
 comparison.
 
+For a same-build Dunes1 comparison, **Performance → Reuse queued GPU surfaces**
+enables the experimental render-buffer reuse. From PowerShell, use
+`$env:RECOMP_GPU_ROTATE_SURFACES = '1'` before running Benchmark. Use `'0'`
+for the baseline. The `[GPU-SURFACE-ROTATION]` line reports how many snapshot
+copies were skipped and their total size.
+
 ## Shader cache and generated files
 
 Compiled GPU shaders (`*.dxbc`) are stored in `shader-cache/`, separate from
