@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Optional display labels. Each number matches Track<number>.wav. -->
+<soundtrack>
+  <song number="1"><title>Bad Religion</title><artist>Godsmack</artist></song>
+  <song number="2"><title>Your Number Is 1</title><artist>Rollins Band</artist></song>
+  <song number="3"><title>And I</title><artist>Boxcar Racer</artist></song>
+  <song number="4"><title>Become What You Hate</title><artist>Midtown</artist></song>
+  <song number="5"><title>Party Like a Rockstar</title><artist>Sprung Monkey</artist></song>
+  <song number="6"><title>Television</title><artist>The Reunion Show</artist></song>
+  <song number="7"><title>Gravity</title><artist>Audiovent</artist></song>
+  <song number="8"><title>Freaks</title><artist>Bionic Jive</artist></song>
+</soundtrack>

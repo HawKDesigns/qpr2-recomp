@@ -24,6 +24,28 @@ The launcher **wraps `rebuild-and-run.ps1`**; it does not replace it. A normal l
 
 Left/Right change a setting's value. The right stick scrolls long pages. Mouse works too. Button prompts follow the controller you last touched (Xbox or PlayStation).
 
+### Music
+
+The launcher plays the soundtrack from your local game files. It looks for
+`TrackN.wav` under `game/Licensed`, `game/ATV/Licensed`, and then under
+`Licensed/` inside `game/ATV.zip`, using the first match for each track number.
+The launcher comes with track labels. It reads the audio from your game files.
+
+Open **Launcher → Music** to choose a track, set the volume, turn shuffle on
+or off, or change the Xbox ADPCM layout. Music pauses when the game starts
+and resumes when it exits.
+
+| Action | Controller | Keyboard |
+|---|---|---|
+| Pause or resume | X | M |
+| Previous track | LT | B |
+| Next track | RT | N |
+
+To change the labels, edit `launcher/music/tracks.xml`. Each
+`<song number="1"><title>Song title</title><artist>Artist</artist></song>`
+entry labels the corresponding `Track1.wav`. Tracks without a label appear as
+**Track N**.
+
 ## What it does
 
 - **Setup check** - verifies `default.xbe` against the supported SHA-256, the ATV archive, runtime, translated code, shaders and build, with plain-language fixes. First launch shows progress with live log lines.

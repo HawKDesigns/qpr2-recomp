@@ -175,7 +175,8 @@ function settingsGroups(pageId) {
   const order = []; list.forEach(d => { if (!order.includes(d.group)) order.push(d.group); });
   return order.map(g => {
     const rows = list.filter(d => d.group === g), binds = rows.every(d => d.widget === 'bind');
-    return `<div class="group-title">${esc(g)}</div>` + (binds ? `<div class="bindgrid">${rows.map(settingRow).join('')}</div>` : rows.map(settingRow).join(''));
+    const extra = pageId === 'launcher' && g === 'Music' ? Music.card() : '';
+    return `<div class="group-title">${esc(g)}</div>` + (binds ? `<div class="bindgrid">${rows.map(settingRow).join('')}</div>` : rows.map(settingRow).join('')) + extra;
   }).join('');
 }
 function pageHead(id) { const [t, s] = PAGE_INFO[id]; return `<h1 class="h1">${esc(t)}</h1><p class="sub">${esc(s)}</p>`; }
@@ -419,6 +420,7 @@ async function pollJob() {
   let j;
   try { j = await api('/api/job?since=' + S.jobNext); S.pingFail = 0; } catch (e) { S.jobTimer = setTimeout(pollJob, 2000); return; }
   S.job = j;
+  Music.syncJob();
   if (j.state === 'idle') { if (S.overlay === 'run' || S.overlay === 'result') closeOverlay(); S.shownResult = null; renderChips(); return; }
   if (j.lines && j.lines.length) { S.jobLines = S.jobLines.concat(j.lines).slice(-80); }
   S.jobNext = j.next;
@@ -430,7 +432,7 @@ async function pollJob() {
     if (S.shownResult !== j.id) {
       S.shownResult = j.id; snd(j.result && (j.result.outcome === 'ok' || j.result.outcome === 'built') ? 'select' : 'error');
       openOverlay('result', resultHTML(j)); renderChips();
-      const st = await safe(() => api('/api/state')); if (st) { S.st = st; applyArtAndTheme(); softRender(); renderBrand(); }
+      const st = await safe(() => api('/api/state')); if (st) { S.st = st; Music.sync(); applyArtAndTheme(); softRender(); renderBrand(); }
     }
   }
 }
@@ -487,10 +489,15 @@ const Actions = {
   quit: async () => {
     const ok = await confirmDlg('Quit the launcher?', 'Any running game stays open.', 'Quit', false);
     if (!ok) return;
+    Music.hold('quit');
     await leaveFullscreen();
     await api('/api/quit', {}).catch(() => { });
     showFatal('Launcher closed', 'You can close this window.');
   },
+  musicToggle: () => Music.toggle(),
+  musicPrev: () => Music.prev(),
+  musicNext: () => Music.next(),
+  musicPlay: n => Music.playNumber(+n),
   fullscreen: async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); } catch (e) { toast('Press F11 to toggle fullscreen.'); } }
 };
 
@@ -574,6 +581,7 @@ function applyUiPrefs() {
   document.documentElement.style.setProperty('--ui', val('ui_scale'));
   document.body.classList.toggle('calm', val('ui_reduce_motion') === '1');
   const a = val('ui_accent'); setAccent(a === 'auto' ? (S.autoAccent || ACCENTS.orange) : (ACCENTS[a] || ACCENTS.orange));
+  Music.sync();
 }
 function sampleAccent(img) {
   try {
@@ -695,6 +703,7 @@ document.addEventListener('keydown', e => {
   if (!S.st || e.ctrlKey || e.altKey || e.metaKey) return;
   setInput('kbd');
   const k = e.key;
+  Music.keys(e);
   const map = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
   if (map[k]) { e.preventDefault(); move(map[k]); }
   else if (k === 'Enter' || k === ' ') { const el = document.activeElement; if (el && el.classList.contains('f')) { e.preventDefault(); activate(el); } }
@@ -783,6 +792,7 @@ function padLoop(now) {
   if (Math.hypot(ax(0), ax(1)) > .6) any = true;
   if (any) setInput('pad');
   if (S.listen) { padListen(gp, now); PAD.prevBy[gp.index] = gp.buttons.map(x => x.pressed); return; }
+  Music.pad(edge, any);
   if (S.input === 'pad') {
     const lx = ax(0), ly = ax(1), mag = Math.hypot(lx, ly), horiz = Math.abs(lx) > Math.abs(ly);
     const up = b(12) || (mag > .6 && !horiz && ly < 0), down = b(13) || (mag > .6 && !horiz && ly > 0), left = b(14) || (mag > .6 && horiz && lx < 0), right = b(15) || (mag > .6 && horiz && lx > 0);
@@ -833,7 +843,8 @@ async function boot() {
   if (q.has('demo')) { S.demo = true; await Mock.init(q.get('demo')); }
   const st = await api('/api/state').catch(e => { showFatal('Could not reach the launcher', 'Start it with QPR2 Launcher.bat. ' + e.message); return null; });
   if (!st) return;
-  S.st = st; document.body.dataset.input = 'kbd';
+  S.st = st; S.job = st.job; document.body.dataset.input = 'kbd';
+  Music.init();
   applyUiPrefs(); applyArtAndTheme(); renderAll();
   setInterval(tickClock, 15000); setInterval(ping, 5000); setInterval(() => { S.tipI++; renderTip(false); }, 14000);
   window.addEventListener('blur', updateWindowFocus);

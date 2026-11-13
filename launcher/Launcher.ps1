@@ -30,7 +30,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-$script:LauncherVersion = '1.1.1'
+$script:LauncherVersion = '1.2.0'
 $script:IsWin = ($env:OS -eq 'Windows_NT')
 $script:Here = $PSScriptRoot
 if (-not $Root) { $Root = Split-Path -Parent $script:Here }
@@ -121,6 +121,7 @@ function Find-Tool([string[]]$Names) {
 # ---------------------------------------------------------------- schema / settings
 $script:Schema = Read-JsonFile $script:SchemaFile $null
 if (-not $script:Schema) { throw "settings-schema.json is missing or invalid: $script:SchemaFile" }
+. (Join-P $script:Here 'music.ps1')
 $script:Defs = @{}
 foreach ($d in $script:Schema.settings) {
     # Large shared lists (the controller button sources) live once under choice_sets.
@@ -1014,6 +1015,7 @@ function Get-FullState {
             root = $script:Root
         }
         schema = $liveSchema
+        music = (Get-MusicState)
         defaults = $d
         settings = $s
         checks = $checks
@@ -1193,6 +1195,10 @@ function Invoke-Request($ctx, [int]$ServerPort) {
             Write-Log "API $method $path failed: $($_.Exception.Message)"
             Send-Json $ctx @{ ok = $false; error = $_.Exception.Message } 400
         }
+        return
+    }
+    if ($method -eq 'GET' -and $path -match '^/music/([0-9]{1,3})$') {
+        Send-MusicTrack $ctx ([int]$Matches[1])
         return
     }
     if ($path -eq '/assets/logo' -or $path -eq '/assets/background') {

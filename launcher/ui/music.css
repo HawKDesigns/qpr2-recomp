@@ -1,0 +1,40 @@
+/* Launcher music player: now-playing marquee in the header and the Music card on the Launcher page. */
+.np { --o: .11rem; flex: 1 1 auto; min-width: 0; max-width: 56rem; margin: 0 auto; display: flex; align-items: center; gap: 1rem; padding: .45rem 1.3rem .45rem 1.1rem; border-radius: 99rem;
+  background: rgba(8, 10, 14, .55); border: 1px solid rgba(var(--accent-rgb), .45); cursor: pointer; transition: opacity .3s, border-color .3s; user-select: none; }
+.np.hidden { display: none; }
+.np:hover { border-color: var(--accent); }
+.np.paused { opacity: .72; }
+.np-ic { flex: none; width: 1.9rem; height: 1.8rem; display: flex; align-items: flex-end; gap: .2rem; color: var(--accent); }
+.np-ic i { display: block; width: .34rem; height: 100%; border-radius: .1rem; background: currentColor; transform-origin: bottom; animation: np-eq 1s ease-in-out infinite; }
+.np-ic i:nth-child(2) { animation-delay: -.35s; } .np-ic i:nth-child(3) { animation-delay: -.7s; }
+.np.paused .np-ic i, .np.loading .np-ic i, body.calm .np-ic i { animation: none; transform: scaleY(.35); }
+.np.loading .np-ic { opacity: .6; }
+@keyframes np-eq { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(1); } }
+
+.np-view { position: relative; overflow: hidden; flex: 1; min-width: 0; height: 2.5rem;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 6%, #000 94%, transparent 100%); mask-image: linear-gradient(90deg, transparent 0, #000 6%, #000 94%, transparent 100%); }
+.np-track { position: absolute; left: 0; top: 0; display: flex; white-space: nowrap; will-change: transform; animation: np-scroll var(--np-dur, 14s) linear infinite; }
+.np.paused .np-track, body.inactive .np-track, body.inactive .np-ic i { animation-play-state: paused; }
+@keyframes np-scroll { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(var(--np-shift, -100px), 0, 0); } }
+/* White text with an accent outline: eight offsets make a clean ring in every browser, plus a soft glow. */
+.np-t, .np-sep { font-size: 1.5rem; font-weight: 800; letter-spacing: .03em; line-height: 2.5rem; color: #fff;
+  text-shadow: var(--o) 0 0 var(--accent), calc(var(--o) * -1) 0 0 var(--accent), 0 var(--o) 0 var(--accent), 0 calc(var(--o) * -1) 0 var(--accent),
+    calc(var(--o) * .75) calc(var(--o) * .75) 0 var(--accent), calc(var(--o) * -.75) calc(var(--o) * .75) 0 var(--accent),
+    calc(var(--o) * .75) calc(var(--o) * -.75) 0 var(--accent), calc(var(--o) * -.75) calc(var(--o) * -.75) 0 var(--accent),
+    0 0 .55rem rgba(var(--accent-rgb), .55); }
+.np-sep { padding: 0 1.8rem; font-size: 1.05rem; }
+/* Reduce motion: no scrolling; one line, ellipsis when it does not fit. */
+.np.static .np-view { -webkit-mask-image: none; mask-image: none; }
+.np.static .np-track { position: static; display: block; animation: none; overflow: hidden; text-overflow: ellipsis; }
+
+/* Launcher page card */
+.mnow { font-size: 1.45rem; font-weight: 800; min-height: 2rem; margin-bottom: 1.2rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mnow small { display: block; font-size: 1rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); margin-bottom: .2rem; }
+.mlist { margin-top: 1.4rem; }
+.li.now { background: rgba(var(--accent-rgb), .18); }
+.li.now .nm::before { content: "\266A  "; color: var(--accent); }
+.mhint { margin-top: 1rem; color: var(--dim); font-size: 1.05rem; }
+@media (max-width: 1100px) { .np { margin: 0 1rem; } }
+
+/* Keep the marquee clear of the brand and the status chips. */
+#top { gap: 2rem; }
