@@ -30,7 +30,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-$script:LauncherVersion = '1.1.0'
+$script:LauncherVersion = '1.1.1'
 $script:IsWin = ($env:OS -eq 'Windows_NT')
 $script:Here = $PSScriptRoot
 if (-not $Root) { $Root = Split-Path -Parent $script:Here }
@@ -42,7 +42,8 @@ $script:StateFile = Join-Path $script:Here 'launcher.state.json'
 $script:LogFile = Join-Path $script:Here 'launcher.log'
 $script:SchemaFile = Join-Path $script:Here 'settings-schema.json'
 $script:ProfileDir = Join-Path $script:Here '.ui-profile'
-$script:WindowTitleMatch = '*QPR2 Launcher*'
+$script:UiProfile = $null
+$script:UiProcess = $null
 $script:ArtUrls = [ordered]@{
     logo       = 'https://cdn2.steamgriddb.com/logo/15d54085c87a67c0ff3c1f01b1c31eb9.png'
     background = 'https://www.video-games-museum.com/en/screenshots/Playstation%202/2/49662-menu-ATV-Quad-Power-Racing-2.jpg'
@@ -474,18 +475,18 @@ function Initialize-WinApi {
 }
 
 function Get-UiProcess {
-    if (-not $script:IsWin) { return $null }
-    return (Get-Process -ErrorAction SilentlyContinue |
-        Where-Object { $_.ProcessName -in @('msedge', 'chrome', 'brave', 'vivaldi') -and $_.MainWindowTitle -like $script:WindowTitleMatch } |
-        Select-Object -First 1)
+    $p = $script:UiProcess
+    if (-not $p) { return $null }
+    $p.Refresh()
+    if (-not $p.HasExited) { return $p }
 }
 
 function Set-UiWindow([string]$Action) {
     if (-not $script:IsWin) { return }
     Initialize-WinApi
-    $p = Get-UiProcess
-    if (-not $p -or $p.MainWindowHandle -eq [IntPtr]::Zero) { return }
     try {
+        $p = Get-UiProcess
+        if (-not $p -or $p.MainWindowHandle -eq [IntPtr]::Zero) { return }
         switch ($Action) {
             'minimize' { [void][Qpr2.Native]::ShowWindow($p.MainWindowHandle, 6) }
             'restore'  { [void][Qpr2.Native]::ShowWindow($p.MainWindowHandle, 9); [void][Qpr2.Native]::SetForegroundWindow($p.MainWindowHandle) }
@@ -1106,7 +1107,12 @@ function Invoke-Api($ctx, [string]$Path, [string]$Method) {
         'GET /api/state'    { Send-Json $ctx (Get-FullState); return }
         'GET /api/job'      { $since = 0; [void][int]::TryParse([string]$q['since'], [ref]$since); Send-Json $ctx (Get-JobPayload $since); return }
         'POST /api/ping'    { $script:LastPing = [DateTime]::UtcNow; $script:SeenPing = $true; Send-Json $ctx @{ ok = $true; running = (Test-JobRunning) }; return }
-        'POST /api/quit'    { Send-Json $ctx @{ ok = $true }; $script:StopServer = $true; return }
+        'POST /api/quit'    {
+            Send-Json $ctx @{ ok = $true }
+            Set-UiWindow 'close'
+            $script:StopServer = $true
+            return
+        }
     }
     $body = $null
     if ($Method -eq 'POST') { $body = Read-Body $ctx }
@@ -1227,11 +1233,15 @@ function Start-Ui([string]$Url) {
         foreach ($c in $cands) { if ($c -and (Test-Path -LiteralPath $c -PathType Leaf)) { $browser = $c; break } }
     }
     if ($browser) {
-        New-Item -ItemType Directory -Force -Path $script:ProfileDir | Out-Null
-        $a = @("--app=$Url", ('--user-data-dir=' + (Q $script:ProfileDir)), '--no-first-run', '--no-default-browser-check',
-            '--autoplay-policy=no-user-gesture-required', '--disable-features=Translate,msEdgeSidebarV2', '--window-size=1600,900')
+        # A separate browser instance must pick up the launcher compositor flags.
+        # Keep its DirectComposition surfaces out of the fullscreen focus transition.
+        $script:UiProfile = Join-P $script:ProfileDir ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $script:UiProfile | Out-Null
+        $a = @("--app=$Url", ('--user-data-dir=' + (Q $script:UiProfile)), '--no-first-run', '--no-default-browser-check',
+            '--autoplay-policy=no-user-gesture-required', '--disable-features=Translate,msEdgeSidebarV2', '--window-size=1600,900',
+            '--disable-direct-composition', '--disable-background-mode')
         if ($full) { $a += '--start-fullscreen' }
-        Start-Process -FilePath $browser -ArgumentList $a | Out-Null
+        $script:UiProcess = Start-Process -FilePath $browser -ArgumentList $a -PassThru
         Write-Log "UI opened with $browser"
     } else {
         Write-Log 'No Edge/Chrome found; using the default browser.'
@@ -1276,9 +1286,15 @@ try {
         while (-not $task.AsyncWaitHandle.WaitOne(400)) {
             if (Test-JobRunning) { Update-Job }
             if ($script:StopServer) { break }
-            # Window closed (no heartbeat) and nothing running: shut down quietly.
-            if ($script:SeenPing -and -not (Test-JobRunning) -and (([DateTime]::UtcNow - $script:LastPing).TotalSeconds -gt 45)) {
-                Write-Log 'No heartbeat; shutting down.'; $script:StopServer = $true; break
+            if (-not (Test-JobRunning)) {
+                $uiClosed = $script:UiProcess -and $script:UiProcess.HasExited
+                $pingExpired = -not $script:UiProcess -and $script:SeenPing -and
+                    (([DateTime]::UtcNow - $script:LastPing).TotalSeconds -gt 45)
+                if ($uiClosed -or $pingExpired) {
+                    Write-Log 'Launcher window closed; shutting down.'
+                    $script:StopServer = $true
+                    break
+                }
             }
         }
         if ($script:StopServer -and -not $task.IsCompleted) { break }
@@ -1296,6 +1312,14 @@ try {
     } else { Write-Host "FATAL: $($_.Exception.Message)" }
 } finally {
     try { if ($listener) { $listener.Stop(); $listener.Close() } } catch { }
+    if ($script:UiProfile) {
+        try {
+            Set-UiWindow 'close'
+            if (-not $script:UiProcess -or $script:UiProcess.WaitForExit(2000)) {
+                Remove-Item -LiteralPath $script:UiProfile -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        } catch { Write-Log "UI cleanup failed: $($_.Exception.Message)" }
+    }
     if (Test-JobRunning) { Write-Log 'Launcher exiting while a job is running; leaving it alone.' }
     Write-Log 'Launcher stopped.'
 }

@@ -6,6 +6,8 @@ A couch-friendly launcher for the ATV: Quad Power Racing 2 recomp. Pick up a con
 
 Double-click **`QPR2 Launcher.bat`** in the project root. It opens the launcher in an Edge or Chrome app window. The project builds monitor selection and controller options by default. Run `"QPR2 Launcher.bat" debug` from Command Prompt to see the launcher log in a console.
 
+The launcher uses a fresh browser profile and disables DirectComposition for that window to avoid persistent fullscreen artifacts on multi-monitor Windows setups. Fullscreen entered with the launcher's **Toggle fullscreen** button exits when the window loses focus.
+
 The launcher **wraps `rebuild-and-run.ps1`**; it does not replace it. A normal launch runs that script, so the build, shader learning, `run.json` manifests and results ZIPs all behave exactly as before.
 
 ### Controls

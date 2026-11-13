@@ -484,9 +484,28 @@ const Actions = {
   shortcut: async () => { const r = await safe(() => api('/api/shortcut', {})); if (r) toast('Shortcut added to your desktop.', 'ok'); },
   resetPage: async (p) => { const ok = await confirmDlg('Reset this page?', 'Every setting on this page goes back to its default.', 'Reset', false); if (ok) { const r = await safe(() => api('/api/reset', { scope: p })); if (r) { S.st.settings = r.settings; applyUiPrefs(); softRender(); toast('Defaults restored.', 'ok'); } } },
   resetAll: async () => { const ok = await confirmDlg('Reset all settings?', 'Launcher and game settings return to their defaults. Saves and backups are not touched.', 'Reset everything', true); if (ok) { const r = await safe(() => api('/api/reset', { scope: 'all' })); if (r) { S.st.settings = r.settings; applyUiPrefs(); applyArtAndTheme(); softRender(); toast('All settings reset.', 'ok'); } } },
-  quit: async () => { const ok = await confirmDlg('Quit the launcher?', 'The game is not affected if it is running.', 'Quit', false); if (ok) { await api('/api/quit', {}).catch(() => { }); showFatal('Launcher closed', 'You can close this window.'); } },
+  quit: async () => {
+    const ok = await confirmDlg('Quit the launcher?', 'Any running game stays open.', 'Quit', false);
+    if (!ok) return;
+    await leaveFullscreen();
+    await api('/api/quit', {}).catch(() => { });
+    showFatal('Launcher closed', 'You can close this window.');
+  },
   fullscreen: async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); } catch (e) { toast('Press F11 to toggle fullscreen.'); } }
 };
+
+async function leaveFullscreen() {
+  if (document.fullscreenElement) {
+    // A browser-initiated exit can race this request during focus loss.
+    await document.exitFullscreen().catch(() => { });
+  }
+}
+
+function updateWindowFocus() {
+  const inactive = document.hidden || !document.hasFocus();
+  document.body.classList.toggle('inactive', inactive);
+  if (inactive) void leaveFullscreen();
+}
 async function activate(el) {
   if (!el) return;
   if (el.classList.contains('nav-item')) { setPage(el.dataset.page); focusContent(); snd('select'); return; }
@@ -817,7 +836,14 @@ async function boot() {
   S.st = st; document.body.dataset.input = 'kbd';
   applyUiPrefs(); applyArtAndTheme(); renderAll();
   setInterval(tickClock, 15000); setInterval(ping, 5000); setInterval(() => { S.tipI++; renderTip(false); }, 14000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) { reloadState(); if (S.job && S.job.state === 'running') pollJob(); } });
+  window.addEventListener('blur', updateWindowFocus);
+  window.addEventListener('focus', updateWindowFocus);
+  document.addEventListener('fullscreenchange', updateWindowFocus);
+  document.addEventListener('visibilitychange', () => {
+    updateWindowFocus();
+    if (!document.hidden) { reloadState(); if (S.job && S.job.state === 'running') pollJob(); }
+  });
+  updateWindowFocus();
   requestAnimationFrame(padLoop);
   const play = $('[data-fid="play"]'); if (play) play.focus({ preventScroll: true });
   if (st.job && st.job.state !== 'idle') { S.jobNext = 0; S.jobLines = []; pollJob(); }
