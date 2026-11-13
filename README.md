@@ -158,6 +158,31 @@ enables the experimental render-buffer reuse. From PowerShell, use
 for the baseline. The `[GPU-SURFACE-ROTATION]` line reports how many snapshot
 copies were skipped and their total size.
 
+## Diagnose race frame times
+
+Benchmark exports `frame-profile.csv` and `profile-summary.json` alongside the
+existing pacing files. The profile compares slow and fast frames within each
+marked scene. It reports FIFO wall time, upload and submission work, render-target
+setup, current and queued staging Map waits, completion/report waits, guest
+memory publication, draw/triangle counts, and the producer size for dependency
+drains. CPU Map time includes waiting for earlier GPU work. Dependency drain
+time includes its nested stages. Guest fence waits may overlap the renderer.
+The GPU columns are sampled execution times for the submitting frame. Use
+the sample counts and drop/invalid counters to assess coverage. Benchmark
+leaves the shader replay probe off so its extra GPU work stays out of the timing.
+
+Use **F5** at countdown, **F6** on clear track, **F7** behind visible AI, and
+**F4** outside those scenes. Press **F3** before pausing and again after
+resuming. F3 marks an exclusion and leaves the current scene label in place.
+An interval crossing the marker is excluded as well. Keep **F8** capture
+outside the timed part of the run. Use the same track, rider, and camera for
+comparisons. For an overhead check, `RECOMP_FRAME_PROFILE=0` keeps basic frame
+pacing while omitting the detailed CPU/GPU profile. Compare alternating runs
+from the same build and scene.
+
+The profiling design follows [OpenTricky’s grouped GPU timestamp scopes](https://github.com/GiZcesi/OpenTricky/blob/61a03bc/xboxrecomp/src/d3d/d3d8_gpuprof.c)
+and [Takedawn’s same-scene frame-time comparisons](https://github.com/xenophobentx/takedawn/blob/9f7c371/docs/testing.md#frame-times-and-pacing).
+
 ## Shader cache and generated files
 
 Compiled GPU shaders (`*.dxbc`) are stored in `shader-cache/`, separate from

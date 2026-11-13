@@ -83,11 +83,12 @@
         RECOMP_VIRTUAL_PAD = "1"
     }
     Benchmark = @{
+        RECOMP_FRAME_PROFILE = "1"
         RECOMP_GAME_TIMING = "1"
         RECOMP_GPU_GEOMETRY_PROFILE = "1"
         RECOMP_GPU_PROFILE = "1"
         RECOMP_GPU_PROFILE_MATERIALS = "1"
-        RECOMP_GPU_PROFILE_SHADE = "1"
+        RECOMP_GPU_PROFILE_SHADE = "0"
         RECOMP_GPU_PROFILE_SPREAD = "1"
         RECOMP_RENDER_TIMING = "1"
     }

@@ -71,3 +71,45 @@ class FrameTraceTest(unittest.TestCase):
             self.assertIn("candidate has an incomplete trace or dropped records", result["warnings"])
             self.assertEqual(result["manifest_differences"]["mode"], ["Benchmark", "Debug"])
             self.assertEqual(result["phases"]["boot"]["delta"]["p95_ms"], 20)
+
+
+    def test_profile_joins_delayed_samples_and_excludes_pause(self):
+        with tempfile.TemporaryDirectory() as name:
+            run = Path(name)
+            (run / "run.json").write_text(json.dumps({
+                "run_id": "profile", "mode": "Benchmark", "status": "exited",
+            }))
+            records = [
+                record(0, 1, trace.PHASE, producer=1, args=(5, 1, 0)),
+                record(10, 1, trace.FLIP, frame=1),
+                record(25, 2, trace.PAUSE, producer=1, args=(1, 0, 0)),
+                record(40, 2, trace.FLIP, frame=2),
+                record(50, 3, trace.PAUSE, producer=1, args=(0, 0, 0)),
+                record(60, 3, trace.FLIP, frame=3),
+                record(100, 4, trace.FLIP, frame=4),
+                record(100, 5, trace.CPU_METRIC, frame=4, args=(0, 19000, 0)),
+                record(100, 6, trace.CPU_METRIC, frame=4, args=(6, 9000, 0)),
+                record(100, 7, trace.CPU_METRIC, frame=4, args=(45, 11000, 0)),
+                record(100, 8, trace.PROFILE_FRAME, frame=4),
+                record(110, 1, trace.GUEST_FENCE_WAIT, producer=2, args=(30000, 0, 1)),
+                record(130, 9, trace.FLIP, frame=5),
+                record(130, 10, trace.PROFILE_FRAME, frame=5),
+                record(145, 11, trace.GPU_SAMPLE, frame=4, args=(6, 3100, 50)),
+                *(record(150, 0, trace.FOOTER, producer=i) for i in range(3)),
+            ]
+            (run / "frame-trace.bin").write_bytes(
+                trace.HEADER.pack(b"QPTR", 2, trace.RECORD.size, 3) + b"".join(records))
+            trace.export(run)
+            with (run / "frame-profile.csv").open(newline="") as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual([row["excluded"] for row in rows[1:3]], ["pause", "pause_boundary"])
+            self.assertEqual(rows[3]["gpu_raw_pixels_sample_ms"], "3.1")
+            self.assertEqual(rows[3]["guest_fence_wait_ms"], "20.0")
+            self.assertEqual(rows[4]["guest_fence_wait_ms"], "10.0")
+            self.assertEqual(rows[3]["fifo_ms"], "19.0")
+            self.assertEqual(rows[3]["gpu_raw_pixels_sample_count"], "1")
+            self.assertEqual(rows[3]["target_depth_256x256_ms"], "11.0")
+            data = json.loads((run / "profile-summary.json").read_text())
+            self.assertTrue(data["trace_complete_without_loss"])
+            self.assertEqual(data["phases"]["behind"]["slow_and_fast_frame_means"]
+                             ["over_33ms"]["queued_map_ms"], 9)

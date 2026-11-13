@@ -1,5 +1,6 @@
 """Exercise the actual recorder and offline reader with a small Win32 shim."""
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -46,6 +47,7 @@ DRIVER = r"""
 #include <assert.h>
 #include "windows.h"
 #include "frame_trace.h"
+#include "nv2a_frame_profile.h"
 #include "host_time.h"
 
 static pthread_t writer;
@@ -87,11 +89,25 @@ FILE *_wfopen(const wchar_t *path, const wchar_t *mode)
     return fopen("frame-trace.bin", "wb");
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+    (void)argv;
     assert(!xbox_frame_trace_enabled());
     assert(xbox_frame_trace_start(L"frame-trace.bin"));
     xbox_frame_trace_note(XBOX_TRACE_TITLE, XBOX_TRACE_PHASE, 0, XBOX_PHASE_BOOT, 0, 0);
+    if (argc > 1) {
+        assert(nv2a_frame_profile_enabled());
+        nv2a_frame_profile_fifo_enter(5);
+        xbox_frame_trace_note(XBOX_TRACE_RENDERER, XBOX_TRACE_FLIP, 1, 0, 0, 0);
+        nv2a_frame_profile_flip(1, 8, 15);
+        assert(nv2a_frame_profile_next_id() == 2);
+        nv2a_frame_profile_add(NV_FRAME_UPLOAD, 3.5);
+        nv2a_frame_profile_fifo_leave(20);
+        xbox_frame_trace_note(XBOX_TRACE_RENDERER, XBOX_TRACE_FLIP, 2, 0, 0, 0);
+        nv2a_frame_profile_flip(2, 4, 25);
+        xbox_frame_trace_stop();
+        return 0;
+    }
     for (uint32_t frame = 1; frame <= 1100; ++frame) {
         xbox_frame_trace_guest_ticks(2);
         xbox_frame_trace_note(XBOX_TRACE_RENDERER, XBOX_TRACE_FLIP, frame,
@@ -118,7 +134,9 @@ class FrameTraceRecorderTest(unittest.TestCase):
             subprocess.run([
                 "gcc", "-std=c11", "-pthread", "-O2", "-Wall", "-Wextra", "-Werror",
                 "-DXBOX_FRAME_TELEMETRY=1", "-I", str(run), "-I", str(PLATFORM),
-                str(PLATFORM / "frame_trace.c"), str(run / "driver.c"), "-o", str(run / "driver"),
+                "-I", str(PLATFORM.parent), "-I", str(PLATFORM.parent / "kernel"),
+                str(PLATFORM / "frame_trace.c"),
+                str(PLATFORM.parent / "kernel/nv2a_frame_profile.c"), str(run / "driver.c"), "-o", str(run / "driver"),
             ], check=True)
             subprocess.run([str(run / "driver")], cwd=run, check=True, timeout=10)
             result = trace.export(run)
@@ -127,3 +145,10 @@ class FrameTraceRecorderTest(unittest.TestCase):
             self.assertEqual(result["phases"]["boot"]["flip_count"], 1024)
             self.assertEqual(result["phases"]["boot"]["guest_tick_hz"], 2000)
             self.assertEqual([mark["phase"] for mark in result["phase_markers"]], ["boot", "ahead"])
+            subprocess.run([str(run / "driver"), "profile"], cwd=run, check=True, timeout=10,
+                           env={**os.environ, "RECOMP_FRAME_PROFILE": "1"})
+            trace.export(run)
+            profile = json.loads((run / "profile-summary.json").read_text())
+            self.assertEqual(profile["profiled_frames"], 2)
+            frame = profile["phases"]["boot"]["per_frame_mean"]
+            self.assertEqual((frame["fifo_ms"], frame["upload_ms"], frame["draw_requests"]), (5, 3.5, 4))
