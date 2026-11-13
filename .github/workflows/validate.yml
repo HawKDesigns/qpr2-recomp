@@ -20,6 +20,10 @@ jobs:
           tools/tests/test_qpr2_pipeline.py
       - name: Run unit tests
         run: python3 -m unittest discover -s tools/tests -v
+      - name: Generate the generic GPU shader header
+        run: >-
+          cmake -DINPUT_ROOT="${GITHUB_WORKSPACE}/third_party/xboxrecomp/src/kernel"
+          -P third_party/xboxrecomp/src/kernel/embed_qpr2_gpu_shader.cmake
       - name: Check active runtime paths with local fixtures
         run: |
           gcc -std=c11 -O2 -fsanitize=undefined -fno-sanitize-recover=all tools/test_qpr2_frame_clock.c -o "$RUNNER_TEMP/qpr2-frame-clock"
@@ -31,6 +35,5 @@ jobs:
       - name: Reject accidentally committed retail or generated files
         shell: bash
         run: |
-          test ! -f game/default.xbe
-          test -z "$(find src/recomp/gen -type f -name '*.c' -print -quit)"
+          test -z "$(git ls-files -- game/default.xbe 'src/recomp/gen/*.c')"
 
