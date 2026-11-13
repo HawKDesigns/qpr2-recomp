@@ -221,6 +221,12 @@ function Invoke-Qpr2BuildAndRun {
         if ($exitCode -ne 0) { throw "Lift exited $exitCode. See $liftLog." }
         Set-Content $liftStamp $liftKey
     }
+    if ($Mode -eq "Debug") {
+        $debugLog = Join-Path $runLogDir "debug-metadata.log"
+        $symbols = Join-Path $runLogDir "guest-symbols.json"
+        $exitCode = Invoke-Qpr2Python -Arguments @("tools/qpr2_debug_metadata.py", "symbols", "--output", $symbols) -LogFile $debugLog
+        if ($exitCode -ne 0) { Write-Warning "Guest symbol export exited $exitCode. See $debugLog." }
+    }
 
     $nativeHeader = "third_party/xboxrecomp/src/kernel/nv2a_vsh_compiled.h"
     $literalHeader = "third_party/xboxrecomp/src/kernel/nv2a_gpu_literal_programs.h"
@@ -393,20 +399,35 @@ function Invoke-Qpr2BuildAndRun {
         Write-Host "Starting QPR2 clean v1. Live logs are in $tempLogDir"
         $process = Start-Process -FilePath (Join-Path $buildDir "Release\qpr2_recomp.exe") `
             -WorkingDirectory $root -PassThru -RedirectStandardOutput $tempStdout -RedirectStandardError $tempStderr
+        # Keep the original process handle open through ExitCode, including
+        # when the window thread terminates the process before Refresh().
+        try { $null = $process.Handle } catch {
+            if (-not $process.HasExited) { throw }
+        }
         if ($timeout -eq 0) {
             $process.WaitForExit()
         } elseif (-not $process.WaitForExit($timeout * 1000)) {
-            & taskkill /F /T /PID $process.Id 2>&1 | Out-Null
-            $process.WaitForExit(10000) | Out-Null
-            $manifest["status"] = "timed_out"
-            $manifest["exit_code"] = 124
+            if (-not $process.HasExited) {
+                $killOutput = & cmd.exe /d /c "taskkill /F /T /PID $($process.Id) 2>&1"
+                $killExit = $LASTEXITCODE
+                $killOutput | Set-Content (Join-Path $runLogDir "taskkill.log")
+                if ($killExit -eq 0 -or -not $process.HasExited) {
+                    $process.WaitForExit(10000) | Out-Null
+                    $manifest["status"] = "timed_out"
+                    $manifest["exit_code"] = 124
+                }
+            }
         }
         if ($manifest["status"] -eq "running") {
             $process.Refresh()
             $code = $process.ExitCode
-            if ($null -eq $code) { $code = 125 }
-            $manifest["exit_code"] = [int]$code
-            $manifest["status"] = if ($code -eq 0) { "exited" } else { "failed" }
+            if ($null -eq $code) {
+                $manifest["status"] = "exit_status_unavailable"
+                $manifest["exit_code"] = $null
+            } else {
+                $manifest["exit_code"] = [int]$code
+                $manifest["status"] = if ($code -eq 0) { "exited" } else { "failed" }
+            }
         }
     } finally {
         foreach ($name in $previous.Keys) {
@@ -420,9 +441,19 @@ function Invoke-Qpr2BuildAndRun {
         $manifest | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 $manifestPath
     }
 
+    if ($Mode -ne "Play" -and (Test-Path -LiteralPath (Join-Path $runLogDir "run.stderr.log"))) {
+        $mapLog = Join-Path $runLogDir "memory-map.log"
+        $map = Join-Path $runLogDir "memory-map.json"
+        $exitCode = Invoke-Qpr2Python -Arguments @("tools/qpr2_debug_metadata.py", "memory-map", "--run", $runLogDir, "--output", $map) -LogFile $mapLog
+        if ($exitCode -ne 0) { Write-Warning "Memory map export exited $exitCode. See $mapLog." }
+    }
     Update-Qpr2MaterialFixture
     $results = Join-Path $root "logs\qpr2-clean-v1-results-$runId.zip"
     Compress-Archive -Path (Join-Path $runLogDir "*") -DestinationPath $results
+    if ($null -eq $manifest["exit_code"]) {
+        Write-Warning "The game ended without a readable process exit code. Results: $results"
+        exit 125
+    }
     Write-Host "Run ended with exit code $($manifest['exit_code']). Results: $results"
     if ($manifest["exit_code"] -ne 0) { exit $manifest["exit_code"] }
 }

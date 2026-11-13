@@ -1,0 +1,40 @@
+{
+  "5e9788296601bae4401e31ae1f5e25a8a732cb0bd0588576182d3aa69f859383": {
+    "0x0007F9F0": {
+      "name": "preview path callback",
+      "kind": "confirmed_role",
+      "subsystem": "preview",
+      "evidence": "Recovered path interpolation and camera output in src/qpr2_v43_callbacks.c"
+    },
+    "0x000AB8B0": {
+      "name": "race vtable callback",
+      "kind": "confirmed_role",
+      "subsystem": "race",
+      "evidence": "Observed in race dispatch and recovered from the vtable, see KNOWN_FUNCTION_RANGES"
+    },
+    "0x000CA76D": {
+      "name": "xbe_entry_point",
+      "kind": "verified_entry",
+      "subsystem": "startup",
+      "evidence": "Decoded entry point in the XBE header"
+    },
+    "0x001A7450": {
+      "name": "XPP USB host initialization",
+      "kind": "confirmed_role",
+      "subsystem": "input",
+      "evidence": "Live USB callback and USBH pool initialization, see KNOWN_FUNCTION_RANGES"
+    },
+    "0x001A7D43": {
+      "name": "XPP input completion",
+      "kind": "confirmed_role",
+      "subsystem": "input",
+      "evidence": "Recovered USB input report publication in src/qpr2_callbacks.c"
+    },
+    "0x001A864E": {
+      "name": "XPP SET_CONFIGURATION completion",
+      "kind": "confirmed_role",
+      "subsystem": "input",
+      "evidence": "Live XPP controller setup and endpoint registration, see KNOWN_FUNCTION_RANGES"
+    }
+  }
+}

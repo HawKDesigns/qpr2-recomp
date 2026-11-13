@@ -16,9 +16,7 @@ Keep the matching retail executable, assets, saves and generated shaders local.
 | Build and diagnostics | The launcher records both Git revisions, XBE and embedded shader hashes, settings, mode and exit status. Optimized MSVC builds emit PDBs. Debug mode enables lifted guest PC tracking. |
 
 The upstream DMA walker, flip hold and software raster batching are deferred.
-They overlap the FIFO path used by the parity build. Guest PC tracking and
-the existing statistics are the debugger foundations. The live debugger UI,
-pause/step, symbol catalog and live memory map are follow-on work.
+They overlap the FIFO path used by the parity build.
 
 ## First hardware comparison
 
@@ -41,7 +39,7 @@ or incorrect picture, use Debug mode and keep the associated run folder.
 F8 captures render state when requested. Debug capture changes the timing
 and should be kept outside a benchmark.
 
-## November 12, 2026 Windows baseline
+## Accepted Windows baseline
 
 Benchmark run `20261112-150755-634-9fe8a99e` used title commit `45656bf`
 and the v126 embedded shader hash. The user completed a race, reported
@@ -56,30 +54,40 @@ test. The exact draw path responsible for that result is unverified.
 The 360-second watchdog ended the capture, and the launcher recorded a
 process-not-found error during timeout cleanup.
 
-## Shared depth experiment
+The Dunes comparison was accepted on November 13. Both follow-up archives
+report native ROV, `ready_mask=7`, accepted raw GPU draws and window close.
+Run `20261113-015231-241-e8b6f413` (`0`) was mostly with visible AI and had
+clear track near the end. Run `20261113-015731-850-dba11550` (`1`) was mostly
+behind the pack with no visible AI and rejoined it near the end. The second
+run's manifest records the requested switch, and its renderer log has no
+`GPU-READONLY-DEPTH` counters to establish activation. Leave the experiment
+off while finishing the v1 debugger and logging requirements.
 
-In the same race windows, a five-second report spent a median of 897 ms
-waiting for staging buffers to map and 127 ms publishing pixels to CPU
-memory. Shared depth dependencies triggered 34.35 seconds of queue drains
-across those reports, including time spent mapping and publishing.
+## Debugger foundations
 
-The opt-in `RECOMP_GPU_READONLY_DEPTH` experiment keeps a queued color
-pass pending when the next target uses the same depth buffer and the old
-pass could not change depth. Depth-writing draws, depth clears and aliased
-color/depth destinations retain the existing dependency. The default is off.
+Debug mode exports `guest-symbols.json` after the lift. It combines the
+generated dispatch table, manual callback registry, disassembly, ABI
+inference and reviewed aliases keyed by XBE hash and guest virtual address.
+The catalog includes exact host symbol spellings for PDB lookups and labels
+inferred names and reviewed roles separately.
 
-Run the same race with each setting on the updated runtime:
+Benchmark and Debug runs export `memory-map.json` from the XBE section
+table and the current run's loader observations. Its ranges use exclusive
+ends. It includes the observed contiguous/tiled mapping and alias check,
+heap and stack arenas, apertures and registered D3D device field offsets.
+Sections include the permissions declared by the XBE. These exports run
+outside the game process and are included in the results ZIP.
 
 ```powershell
-$env:RECOMP_GPU_READONLY_DEPTH = "0"
-.\rebuild-and-run.ps1 -Mode Benchmark
-$env:RECOMP_GPU_READONLY_DEPTH = "1"
-.\rebuild-and-run.ps1 -Mode Benchmark
-Remove-Item Env:RECOMP_GPU_READONLY_DEPTH
+.\rebuild-and-run.ps1 -Mode Debug
+$run = Get-ChildItem logs -Directory -Filter "clean-v1-*" | Sort-Object Name | Select-Object -Last 1
+py -3 tools/qpr2_debug_metadata.py lookup "$($run.FullName)/guest-symbols.json" 0x000AB8B0
+py -3 tools/qpr2_debug_metadata.py lookup "$($run.FullName)/memory-map.json" 0xF03D8000
 ```
 
-Compare countdown FPS, both visible-AI and clear-view race segments, and
-ATV and rider shadows. `GPU-READONLY-DEPTH` reports color-only snapshots
-queued without depth publication and shared-depth binds that skipped a
-dependency. `GPU-DEPENDENCY-SOURCE` and `GPU-READBACK-TIME` show whether
-the skipped dependencies reduce time spent waiting across the whole run.
+The memory export is a startup snapshot. Live allocations, thread stacks,
+host page permissions and GPU target ownership need runtime snapshots.
+Remaining work includes typed event rings and crash history, distinct host
+frame counters and phase exports, the live stats overlay and debugger,
+pause/step and selective watches. Historical cleanup and further tuning
+follow those foundations.
