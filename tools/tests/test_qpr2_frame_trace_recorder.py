@@ -128,7 +128,7 @@ int main(int argc, char **argv)
         xbox_frame_trace_stop();
         return 0;
     }
-    for (uint32_t frame = 1; frame <= 1100; ++frame) {
+    for (uint32_t frame = 1; frame <= 4172; ++frame) {
         xbox_frame_trace_guest_ticks(2);
         xbox_frame_trace_note(XBOX_TRACE_RENDERER, XBOX_TRACE_FLIP, frame,
                               xbox_frame_trace_guest_tick_count(), frame, frame);
@@ -162,7 +162,7 @@ class FrameTraceRecorderTest(unittest.TestCase):
             result = trace.export(run)
             self.assertTrue(result["integrity"]["complete"])
             self.assertEqual(result["integrity"]["dropped"]["renderer"], 76)
-            self.assertEqual(result["phases"]["boot"]["flip_count"], 1024)
+            self.assertEqual(result["phases"]["boot"]["flip_count"], 4096)
             self.assertEqual(result["phases"]["boot"]["guest_tick_hz"], 2000)
             self.assertEqual([mark["phase"] for mark in result["phase_markers"]], ["boot", "ahead"])
             subprocess.run([str(run / "driver"), "profile"], cwd=run, check=True, timeout=10,

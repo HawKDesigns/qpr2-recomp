@@ -34,6 +34,7 @@ GPU_PHASES = ("vertex", "prepare", "pixels", "copy")
 RAW_BOUNDARY = ("raw_boundary_numeric", "raw_boundary_w", "raw_boundary_xy",
                 "raw_boundary_z", "raw_boundary_point_limit")
 RAW_COUNTS = ("raw_boundary_draws", "raw_boundary_vertices")
+DEPTH_CLEAR_COUNTS = ("depth_copies_retired_by_clear",)
 FOOTER = 0xFFFFFFFF
 PRODUCERS = ("renderer", "window", "title")
 PHASES = ("unmarked", "boot", "preview", "countdown", "ahead", "behind", "unmarked", "video")
@@ -108,7 +109,7 @@ def difference(new: int, old: int) -> int:
     return (new - old) & UINT32_MASK
 
 
-def frame_rows(events: list[Event]) -> tuple[list[dict], list[dict]]:
+def frame_rows(events: list[Event], exclude_segments=()) -> tuple[list[dict], list[dict]]:
     rows = {}
     phases = []
     phase = "unmarked"
@@ -162,7 +163,8 @@ def frame_rows(events: list[Event]) -> tuple[list[dict], list[dict]]:
                 "guest_ticks": None,
                 "emulated_vblanks": None,
                 "flip_commands": None,
-                "excluded": ("pause" if paused else "capture" if capture else "overlay" if overlay else
+                "excluded": ("manual_exclusion" if segment in exclude_segments else
+                             "pause" if paused else "capture" if capture else "overlay" if overlay else
                              "first_frame" if previous is None else
                              "missing_flip" if difference(event.frame, previous.frame) != 1 else
                              "phase_boundary" if segment != previous_segment else
@@ -325,6 +327,8 @@ def frame_profile(events: list[Event], rows: list[dict], integrity: dict) -> tup
                 key = RAW_COUNTS[event.arg0 - 30]
             elif 56 <= event.arg0 < 56 + len(RAW_BOUNDARY):
                 key = RAW_BOUNDARY[event.arg0 - 56]
+            elif event.arg0 == 61:
+                key = DEPTH_CLEAR_COUNTS[0]
             else:
                 continue
             row[key] = event.arg1 / 1000 if key.endswith("_ms") else event.arg1
@@ -358,7 +362,7 @@ def frame_profile(events: list[Event], rows: list[dict], integrity: dict) -> tup
     data = list(frames.values())
     for row in data:
         if row["profile_complete"]:
-            for key in CPU_FIELDS + dependencies + drain_counts + RAW_COUNTS + RAW_BOUNDARY:
+            for key in CPU_FIELDS + dependencies + drain_counts + RAW_COUNTS + RAW_BOUNDARY + DEPTH_CLEAR_COUNTS:
                 row.setdefault(key, 0)
     eligible = [row for row in data if row["profile_complete"] and not row["excluded"]]
     complete = (integrity["complete"] and not any(integrity["dropped"].values())
@@ -379,7 +383,8 @@ def frame_profile(events: list[Event], rows: list[dict], integrity: dict) -> tup
             },
             "p95_ms": percentile(sorted(row["frame_ms"] for row in group), .95),
             "per_frame_mean": {key: statistics.mean(row[key] for row in group)
-                               for key in CPU_FIELDS + dependencies + drain_counts + RAW_COUNTS + RAW_BOUNDARY + ("guest_fence_wait_ms",)},
+                               for key in CPU_FIELDS + dependencies + drain_counts + RAW_COUNTS + RAW_BOUNDARY +
+                               DEPTH_CLEAR_COUNTS + ("guest_fence_wait_ms",)},
             "gpu_samples_by_frame_time": {
                 label: {
                     key.removesuffix("_sample_ms"): {"total_ms": sum(row.get(key, 0) for row in sample),
@@ -395,19 +400,25 @@ def frame_profile(events: list[Event], rows: list[dict], integrity: dict) -> tup
                   "profiled_frames": sum(row["profile_complete"] for row in data),
                   "gpu_samples_without_flip": orphan_gpu_samples, "phases": cohorts,
                   "slowest_frames": worst,
-                  "columns": list(CPU_FIELDS + dependencies + drain_counts + RAW_COUNTS + RAW_BOUNDARY + gpu_fields + gpu_counts + ("profile_complete",
+                  "columns": list(CPU_FIELDS + dependencies + drain_counts + RAW_COUNTS + RAW_BOUNDARY +
+                      DEPTH_CLEAR_COUNTS + gpu_fields + gpu_counts + ("profile_complete",
                       "gpu_samples", "guest_fence_wait_ms", "guest_fence_waits_ended"))}
 
 
-def export(run_dir: Path) -> dict:
+def export(run_dir: Path, exclude_segments=()) -> dict:
     manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8-sig"))
     events, integrity = read_trace(run_dir / "frame-trace.bin")
-    rows, phase_markers = frame_rows(events)
+    excluded = frozenset(exclude_segments)
+    rows, phase_markers = frame_rows(events, excluded)
+    if excluded - {marker["segment"] for marker in phase_markers} - {0}:
+        raise ValueError("unknown phase segment to exclude")
     # Report source status alongside the data even if the writer reached EOF
     # after a watchdog exit. Runs with lost phase/capture markers are suspect.
     summary = {"schema_version": 2, "run_id": manifest["run_id"], "mode": manifest["mode"],
                "status": manifest["status"], "integrity": integrity,
                "phase_markers": phase_markers, "phases": summarize(rows)}
+    if excluded:
+        summary["manually_excluded_segments"] = sorted(excluded)
     frame_columns = (
         "frame_id", "phase", "segment", "flip_ns", "handoff_ns", "draw_ns",
         "frame_ms", "guest_ticks", "emulated_vblanks", "flip_commands", "excluded")
@@ -435,6 +446,7 @@ def export(run_dir: Path) -> dict:
             and row["segment"] == rows[i - 1]["segment"] and row["frame_ms"] is not None
         ])
     if rows and any(event.kind == PROFILE_FRAME for event in events):
+        summary["profile_exported"] = True
         profiled, profile_summary = frame_profile(events, rows, integrity)
         profile_summary["depth_dependencies"] = depth_dependencies(events, rows)
         columns = profile_summary.pop("columns")
@@ -448,8 +460,8 @@ def export(run_dir: Path) -> dict:
     return summary
 
 
-def compare(reference: Path, candidate: Path) -> dict:
-    before, after = export(reference), export(candidate)
+def compare(reference: Path, candidate: Path, exclude_reference=(), exclude_candidate=()) -> dict:
+    before, after = export(reference, exclude_reference), export(candidate, exclude_candidate)
     warnings = []
     for run in (before, after):
         integrity = run["integrity"]
@@ -472,6 +484,11 @@ def compare(reference: Path, candidate: Path) -> dict:
     environment = {key: [left.get(key), right.get(key)] for key in sorted(left.keys() | right.keys())
                    if key not in ("RECOMP_GPU_CAPTURE", "RECOMP_WATCHDOG_SECS")
                    and left.get(key) != right.get(key)}
+    profiles = []
+    for folder, summary in ((reference, before), (candidate, after)):
+        path = folder / "profile-summary.json"
+        profiles.append(json.loads(path.read_text(encoding="utf-8"))["phases"]
+                        if summary.get("profile_exported") else {})
     phases = {}
     for phase in sorted(before["phases"].keys() | after["phases"].keys()):
         a, b = before["phases"].get(phase), after["phases"].get(phase)
@@ -480,27 +497,42 @@ def compare(reference: Path, candidate: Path) -> dict:
             delta = {k: b[k] - a[k] for k in ("mean_fps", "median_ms", "p95_ms", "p99_ms", "max_ms")
                      if a[k] is not None and b[k] is not None}
         phases[phase] = {"reference": a, "candidate": b, "delta": delta}
+        for label, profile in zip(("reference", "candidate"), profiles):
+            if phase in profile:
+                mean = profile[phase]["per_frame_mean"]
+                phases[phase][label + "_profile"] = {
+                    key: mean[key] for key in ("draw_requests", "fifo_ms", "queued_map_ms",
+                        "completion_map_ms", "target_depth_drains", *DEPTH_CLEAR_COUNTS)
+                } | {"target_depth_ms": sum(mean[f"target_depth_{size}_ms"] for size in TARGET_SIZES)}
     return {"reference": before["run_id"], "candidate": after["run_id"], "warnings": warnings,
+            "excluded_segments": {"reference": before.get("manually_excluded_segments", []),
+                                  "candidate": after.get("manually_excluded_segments", [])},
             "manifest_differences": changed, "environment_differences": environment, "phases": phases}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("export").add_argument("run", type=Path)
+    exporter = commands.add_parser("export")
+    exporter.add_argument("run", type=Path)
+    exporter.add_argument("--exclude-segment", action="append", default=[], type=int,
+                          help="omit a mislabeled segment from statistics; use the segment column in frames.csv")
     comparison = commands.add_parser("compare")
     comparison.add_argument("reference", type=Path)
     comparison.add_argument("candidate", type=Path)
+    comparison.add_argument("--exclude-reference-segment", action="append", default=[], type=int)
+    comparison.add_argument("--exclude-candidate-segment", action="append", default=[], type=int)
     args = parser.parse_args()
     try:
         if args.command == "export":
-            summary = export(args.run)
+            summary = export(args.run, args.exclude_segment)
             integrity = summary["integrity"]
             if not integrity["complete"] or any(integrity["dropped"].values()) or any(integrity["sequence_gaps"].values()):
                 print("Frame trace is incomplete or has dropped records.", file=sys.stderr)
             print(f'Exported {sum(p["flip_count"] for p in summary["phases"].values())} flips from {args.run}')
         else:
-            print(json.dumps(compare(args.reference, args.candidate), indent=2))
+            print(json.dumps(compare(args.reference, args.candidate, args.exclude_reference_segment,
+                                     args.exclude_candidate_segment), indent=2))
     except (OSError, ValueError, KeyError) as error:
         print(f"Frame trace: {error}", file=sys.stderr)
         return 1

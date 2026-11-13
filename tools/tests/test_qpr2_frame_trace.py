@@ -73,6 +73,13 @@ class FrameTraceTest(unittest.TestCase):
             self.assertIn("candidate has an incomplete trace or dropped records", result["warnings"])
             self.assertEqual(result["manifest_differences"]["mode"], ["Benchmark", "Debug"])
             self.assertEqual(result["phases"]["boot"]["delta"]["p95_ms"], 20)
+            corrected = trace.compare(reference, candidate, exclude_reference=[1])
+            self.assertEqual(corrected["excluded_segments"]["reference"], [1])
+            self.assertEqual(corrected["phases"]["boot"]["reference"]["measured_intervals"], 0)
+            self.assertEqual(corrected["phases"]["boot"]["reference"]["excluded_intervals"],
+                             {"manual_exclusion": 5})
+            with self.assertRaisesRegex(ValueError, "unknown phase segment"):
+                trace.export(reference, [99])
 
 
     def test_profile_joins_delayed_samples_and_excludes_pause(self):

@@ -217,10 +217,13 @@ function Get-Qpr2RuntimeSource([string]$PinnedRevision, [bool]$TitleIsArchive) {
     $rendererHeader = Join-Path $runtimePath "src/kernel/nv2a_overlay_revision.h"
     $frameTraceSource = Join-Path $runtimePath "src/platform/frame_trace.c"
     $frameTraceHeader = Join-Path $runtimePath "src/platform/frame_trace.h"
+    $profileHeader = Join-Path $runtimePath "src/kernel/nv2a_frame_profile.h"
     if (-not (Test-Path -LiteralPath $rendererHeader -PathType Leaf) -or
         -not (Test-Path -LiteralPath $frameTraceSource -PathType Leaf) -or
         -not (Test-Path -LiteralPath $frameTraceHeader -PathType Leaf) -or
         -not (Select-String -LiteralPath $frameTraceHeader -Quiet -SimpleMatch 'XBOX_TRACE_DEPTH_DRAIN') -or
+        -not (Test-Path -LiteralPath $profileHeader -PathType Leaf) -or
+        -not (Select-String -LiteralPath $profileHeader -Quiet -SimpleMatch 'NV_FRAME_DEPTH_CLEAR_RETIRED') -or
         -not (Select-String -LiteralPath $rendererHeader -Quiet -Pattern '^#define QPR2_RENDERER_REVISION 1701u$') -or
         -not (Select-String -LiteralPath $lifter -Quiet -SimpleMatch '--runtime-instruction-hooks')) {
         throw "The XboxRecomp source in $runtimePath is incompatible. Use the QPR2 runtime archive for $PinnedRevision."

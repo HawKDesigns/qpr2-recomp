@@ -85,6 +85,75 @@ static void check_readonly_depth(NvGpuCount *count){
  assert(all_maps && !g.pending_count && queue_depths[0][0]==10);
  assert(nv_gpu_sync(count)==1);
 }
+static void check_depth_clear_retirement(void){
+ NvGpuCount count, reference_count;
+ float depth[16*24], expected[16*24];
+ for(unsigned opt_in=0;opt_in<2;opt_in++){
+  reset_queue();
+  g.depth_clear.enabled=opt_in;
+  for(unsigned i=0;i<16*24;i++)depth[i]=100;
+  assert(nv_gpu_draw(&queue_state,&queue_tri,1,ram+colors_at(0),depth,24,empty_sources)==1);
+  draw_target(1);
+  assert(g.pending_count==1 && g.pending[0].publish_depth && !all_maps);
+  /* A smaller clear cannot retire the full older extent. */
+  assert(nv_gpu_retire_depth_on_clear(depth,24,8,100)==0);
+  assert(g.pending[0].publish_depth && g.pending[0].baseline_valid);
+  assert(nv_gpu_retire_depth_on_clear(depth,24,16,100)==(int)opt_in);
+  if(!opt_in)assert(gpu_pending_drain());
+  else assert(g.pending_count==1 && !g.pending[0].publish_depth && !g.pending[0].baseline_valid &&
+              g.pending[0].has_stats && !all_maps);
+  for(unsigned i=0;i<16*24;i++)depth[i]=100;
+  /* Switch to a different extent/layout over the same depth cache. Verify
+   * the old color survives and the later depth is clipped to the new extent. */
+  queue_state.width=queue_state.height=8;queue_state.pitch=32;queue_state.format=0x03030228;
+  queue_tri=triangle(8);tint(0xFF123456);
+  assert(nv_gpu_draw(&queue_state,&queue_tri,1,ram+colors_at(2),depth,24,empty_sources)==1);
+  if(opt_in)assert(g.pending_count==2 && !all_maps);
+  assert(nv_gpu_sync(&count)==1 && count.zpass>0);
+  assert(MEM(colors_at(0))==0xFFFFFFFF && MEM(colors_at(2))==0xFF123456);
+  assert(depth[0]==10 && depth[8]==100 && depth[8*24]==100);
+  if(!opt_in){memcpy(expected,depth,sizeof expected);reference_count=count;}
+  else {
+   assert(!memcmp(expected,depth,sizeof expected));
+   assert(count.zpass==reference_count.zpass && count.depth_fail==reference_count.depth_fail &&
+          count.pixels==reference_count.pixels);
+  }
+ }
+ reset_queue();g.depth_clear.enabled=1;
+ float *alias=(float*)(ram+colors_at(0));
+ for(unsigned i=0;i<256;i++)alias[i]=100;
+ assert(nv_gpu_draw(&queue_state,&queue_tri,1,(uint8_t*)alias,alias,16,empty_sources)==1);
+ draw_target(1);
+ assert(!nv_gpu_retire_depth_on_clear(alias,16,16,100) && g.pending[0].publish_depth);
+ assert(nv_gpu_sync(&count)==1);
+ reset_queue();
+ draw_target(0);draw_target(1);
+ /* The active and pending target can share the cache after an exact resume
+  * or a prior full clear. Exercise the active GPU clear before retirement. */
+ g.host_depth=queue_depths[0];
+ assert(nv_gpu_retire_depth_on_clear(queue_depths[0],16,16,42)==1 && !all_maps);
+ for(unsigned i=0;i<256;i++)queue_depths[0][i]=42;
+ assert(nv_gpu_sync(&count)==1 && queue_depths[0][0]==42);
+ assert(MEM(colors_at(0))==0xFFFFFFFF && MEM(colors_at(1))==0xFFFFFFFF && count.zpass>0);
+ /* Drive the actual guest CLEAR_SURFACE path and a guest fence. The active
+  * target uses a separate depth cache. Its color and the older color are
+  * visible at the same fence boundary as before. */
+ setup(1);reset_queue();release_count=0;
+ MEM(0x130000)=0x110000;
+ assert(!xbox_Nv2aCommandFence(0x130000,0x30,8,32));
+ float *guest_depth=zbuf_current(1);
+ assert(nv_gpu_draw(&queue_state,&queue_tri,1,ram+colors_at(0),guest_depth,NV_ZBUF_W,empty_sources)==1);
+ draw_target(1);
+ nv2a_pb_exec_method(0,NV097_CLEAR_SURFACE,1);
+ assert(g.pending_count==1 && !g.pending[0].publish_depth && !all_maps && guest_depth[0]==0);
+ nv2a_pb_exec_fifo_begin();
+ nv2a_pb_exec_method(0,0x1D70,91);
+ assert(MEM(0x80070000)==0);
+ nv2a_pb_exec_fifo_end();
+ assert(MEM(0x80070000)==91 && guest_depth[0]==0);
+ assert(MEM(colors_at(0))==0xFFFFFFFF && MEM(colors_at(1))==0xFFFFFFFF);
+ puts("PASS: full-depth clear retires only superseded depth; different extents match baseline; color, visibility and aliases are preserved");
+}
 int main(int argc,char **argv){
  const char *mode=argc>1?argv[1]:"default";
  ram=mmap(NULL,0x84000000ull,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_ANONYMOUS|MAP_NORESERVE,-1,0);assert(ram!=MAP_FAILED);g_memory_offset=(ptrdiff_t)ram;
@@ -102,6 +171,7 @@ int main(int argc,char **argv){
  if(!strcmp(mode,"gate-map")){assert(!ready && s_startup==3 && !g.pending_count && !g.host_color && !g.host_depth);puts("PASS: queued startup Map failure prevents hardware readiness and drops all private stack destinations");return 0;}
  assert(ready && g.native);
  if(!strcmp(mode,"gate-corrupt")){assert(!g.readback_queue && !g.pending_count);puts("PASS: corrupted queued startup copies reject only this optimization and retain validated synchronous hardware");return 0;}
+ if(!strcmp(mode,"depth-clear-retire")){check_depth_clear_retirement();return 0;}
  reset_queue();
  if(!strcmp(mode,"disabled")){assert(!g.readback_queue);draw_target(0);draw_target(1);assert(all_maps==2 && !g.pending_count && MEM(colors_at(0))==0xFFFFFFFF);puts("PASS: explicit opt-out retains synchronous target-switch completion");return 0;}
  assert(g.readback_queue);
@@ -248,7 +318,7 @@ with tempfile.TemporaryDirectory(prefix="qpr2-readback-queue-") as folder:
     (tmp / "test.c").write_text(code)
     exe = tmp / "test"
     subprocess.run(["gcc", "-std=gnu11", "-O1", "-fsanitize=undefined,float-cast-overflow", "-fno-sanitize-recover=all", "-Werror=implicit-function-declaration", "-Werror=incompatible-pointer-types", "-ffunction-sections", "-fdata-sections", "-I" + str(tmp), "-I" + str(root / "tools"), "-I" + str(kernel), "-I" + str(root / "third_party/xboxrecomp/src"), str(tmp / "test.c"), str(kernel / "nv2a_gpu_tiles.c"), str(kernel / "nv2a_vsh_interp.c"), str(kernel / "nv2a_combiner.c"), "-Wl,--gc-sections", "-pthread", "-lm", "-o", str(exe)], check=True)
-    for mode in ["default", "quiet", "disabled", "gate-corrupt", "gate-map", "readonly-depth", "rotation", "rotation-eager"]:
+    for mode in ["default", "quiet", "disabled", "gate-corrupt", "gate-map", "readonly-depth", "rotation", "rotation-eager", "depth-clear-retire"]:
         print("RUN readback queue " + mode, flush=True)
         subprocess.run([str(exe), mode], cwd=tmp, check=True, timeout=90)
-    print("PASS: all 8 readback queue modes passed")
+    print("PASS: all 9 readback queue modes passed")

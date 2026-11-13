@@ -37,6 +37,8 @@ int nv_gpu_sync_named(NvGpuCount *count,const char *reason){
 int nv_gpu_clear_color(const NvGpuState*s,uint8_t*c,unsigned l,unsigned t,unsigned r,unsigned b,uint32_t v)
 {(void)s;(void)c;(void)l;(void)t;(void)r;(void)b;(void)v;return 0;}
 int nv_gpu_clear_depth(float*d,unsigned stride,float v){(void)d;(void)stride;(void)v;return 0;}
+int nv_gpu_retire_depth_on_clear(float*d,unsigned stride,unsigned rows,float v)
+{(void)d;(void)stride;(void)rows;(void)v;return 0;}
 int nv_gpu_reset_report(void){return 0;}
 void nv_gpu_capture_present(const uint32_t*p,unsigned w,unsigned h){(void)p;(void)w;(void)h;}
 void nv_gpu_capture_request(void){}

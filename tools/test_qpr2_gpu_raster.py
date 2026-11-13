@@ -64,6 +64,8 @@ int nv_gpu_clear_depth(float*d,unsigned stride,float v){
  for(unsigned i=0;i<mock_state.width*mock_state.height;i++)shadow_depth[i]=v;
  ++mock_clears;return 1;
 }
+int nv_gpu_retire_depth_on_clear(float*d,unsigned stride,unsigned rows,float v)
+{(void)d;(void)stride;(void)rows;(void)v;return 0;}
 void nv_gpu_report(void){}
 void nv_gpu_capture_request(void){}
 void nv_gpu_capture_present(const uint32_t*p,unsigned w,unsigned h){(void)p;(void)w;(void)h;}

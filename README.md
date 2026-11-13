@@ -196,6 +196,18 @@ from the same build and scene.
 The profiling design follows [OpenTricky’s grouped GPU timestamp scopes](https://github.com/GiZcesi/OpenTricky/blob/61a03bc/xboxrecomp/src/d3d/d3d8_gpuprof.c)
 and [Takedawn’s same-scene frame-time comparisons](https://github.com/xenophobentx/takedawn/blob/9f7c371/docs/testing.md#frame-times-and-pacing).
 
+If a scene key was pressed by mistake, find its segment in `frames.csv`.
+`py -3 tools/qpr2_frame_trace.py export RUN --exclude-segment N` regenerates
+the summaries with that interval excluded and preserves the raw trace.
+`compare` accepts `--exclude-reference-segment` and `--exclude-candidate-segment`.
+
+For a same-build depth-clear comparison, launch Benchmark once with
+`$env:RECOMP_GPU_DEPTH_CLEAR_RETIRE = '1'` and once with `'0'`. The candidate
+can omit an older queued depth write after a full overwrite of its host depth
+cache. The profile counts retired depth publications and reports target-depth
+drains, queued Map time and completion Map time. Start both runs with the same
+track, camera and graphics settings, and check shadows, terrain and race flow.
+
 ## Shader cache and generated files
 
 Compiled GPU shaders (`*.dxbc`) are stored in `shader-cache/`, separate from
