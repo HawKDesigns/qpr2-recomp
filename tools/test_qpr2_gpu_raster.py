@@ -69,6 +69,9 @@ int nv_gpu_retire_depth_on_clear(float*d,unsigned stride,unsigned rows,float v)
 void nv_gpu_report(void){}
 void nv_gpu_capture_request(void){}
 void nv_gpu_capture_present(const uint32_t*p,unsigned w,unsigned h){(void)p;(void)w;(void)h;}
+const uint32_t *nv_gpu_scaled_present(const uint8_t*p,const uint32_t*n,unsigned pitch,unsigned bpp,unsigned*scale)
+{(void)p;(void)n;(void)pitch;(void)bpp;(void)scale;return NULL;}
+void nv_gpu_scaled_cpu_write(const void*p,size_t n){(void)p;(void)n;}
 int nv_gpu_submit(void){return 1;}
 int nv_gpu_has_pending_work(void){return mock_active;}
 int nv_gpu_guest_read(uint64_t a,uint64_t n){(void)a;(void)n;mock_complete();return 1;}

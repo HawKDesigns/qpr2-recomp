@@ -134,6 +134,14 @@ xbox_MemoryLayoutInit: complete
         self.assertIsNone(report["guest_pc"])
         self.assertEqual(report["guest_registers"]["esp"], "0x00780000")
         self.assertEqual(report["host_symbol"], "example+0xF")
+        self.write("run/run.stderr.log", """[CRASH] integer divide by zero at host=0x1234
+  guest pc: 00010004
+  host symbol: example+0xA
+""")
+        report = export_failure(self.root / "run")
+        self.assertEqual(report["reason"], "integer_divide_by_zero")
+        self.assertEqual(report["host_pc"], "0x1234")
+        self.assertEqual(report["guest_pc"]["guest_va"], "0x00010004")
         self.write("run/run.json", {"run_id": "clean", "status": "exited", "exit_code": 0})
         self.write("run/run.stderr.log", "")
         self.assertEqual(export_failure(self.root / "run"), {})

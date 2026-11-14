@@ -187,6 +187,13 @@ static LONG CALLBACK qpr2_exception_handler(PEXCEPTION_POINTERS ep)
         qpr2_crash_stack_dump();
         describe_host_address((void *)ep->ContextRecord->Rip);
         fflush(stderr);
+    } else if (code == EXCEPTION_INT_DIVIDE_BY_ZERO) {
+        fprintf(stderr, "[CRASH] integer divide by zero at host=0x%llX\n",
+                (unsigned long long)ep->ContextRecord->Rip);
+        qpr2_report_guest_registers();
+        qpr2_crash_stack_dump();
+        describe_host_address((void *)ep->ContextRecord->Rip);
+        fflush(stderr);
     }
 
     return EXCEPTION_CONTINUE_SEARCH;

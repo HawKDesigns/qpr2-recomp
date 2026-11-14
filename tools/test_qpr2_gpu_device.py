@@ -220,7 +220,7 @@ static void ID3D11Device3_Release(ID3D11Device3*d){assert(d==&modern_device);}
 static void ID3D11RasterizerState2_Release(ID3D11RasterizerState2*s){assert(s==&coverage_rasterizer);}
 static void ID3D11DeviceContext_IASetInputLayout(ID3D11DeviceContext*c,void*layout){(void)c;assert(!layout);}
 static void ID3D11DeviceContext_IASetPrimitiveTopology(ID3D11DeviceContext*c,unsigned topology){(void)c;assert(topology==D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);}
-static void ID3D11DeviceContext_RSSetViewports(ID3D11DeviceContext*c,unsigned n,const D3D11_VIEWPORT*v){(void)c;assert(n==1 && v->TopLeftX==0 && v->TopLeftY==0 && v->MinDepth==0 && v->MaxDepth==1);native_view=*v;}
+static void ID3D11DeviceContext_RSSetViewports(ID3D11DeviceContext*c,unsigned n,const D3D11_VIEWPORT*v){(void)c;assert(n==1 && v->TopLeftX==v->TopLeftY && (v->TopLeftX==0 || v->TopLeftX==0.5f) && v->MinDepth==0 && v->MaxDepth==1);native_view=*v;}
 static void ID3D11DeviceContext_RSSetScissorRects(ID3D11DeviceContext*c,unsigned n,const D3D11_RECT*r){(void)c;assert(n==1 && !r->left && !r->top && r->right==(int)native_view.Width && r->bottom==(int)native_view.Height);bound_scissor=*r;}
 static void ID3D11DeviceContext_RSSetState(ID3D11DeviceContext*c,ID3D11RasterizerState*r){(void)c;assert(r==&rasterizer || r==&coverage_rasterizer);bound_rasterizer=r;}
 static void ID3D11DeviceContext_VSSetShader(ID3D11DeviceContext*c,ID3D11VertexShader*s,void*a,unsigned n){(void)c;assert((s==&vertex_shader || s==&coverage_vertex_shader) && !a && !n);bound_vertex=s;}
@@ -442,7 +442,33 @@ static void mock_native_draw(ID3D11DeviceContext*ctx,unsigned vertices,unsigned 
  uint32_t*stats=(uint32_t*)bound_uav[2]->buffer->data;
  assert(!bound_uav[0] && bound_uav[1]->buffer->desc.StructureByteStride==8);
  if(g.uav_only){assert(!bound_raster);++uav_only_draws;if(uav_only_map_fail)fail_next_map=1;}
- else assert(bound_raster && bound_raster->texture->desc.Width==state->width && bound_raster->texture->desc.Height==state->height);
+ else assert(bound_raster && bound_raster->texture->desc.Width==(unsigned)native_view.Width && bound_raster->texture->desc.Height==(unsigned)native_view.Height);
+ if(g.scaled.active){
+  unsigned scale=g.scaled.active,width=state->width*scale;
+  assert(bound_pixel==g.scaled.shader && native_view.Width==width && native_view.Height==state->height*scale);
+  assert(native_view.TopLeftX==(scale==2?0.5f:0.0f));
+  for(unsigned primitive=first;primitive<first+n;primitive++){
+   NvGpuTri t=tri[primitive];NvGpuState s=state[t.state_index];
+   for(unsigned y=(unsigned)t.miny*scale;y<(unsigned)t.maxy*scale;y++){
+    for(unsigned x=(unsigned)t.minx*scale;x<(unsigned)t.maxx*scale;x++){
+     size_t at=(size_t)y*width+x;float depth;
+     memcpy(&depth,&surface[at].depth_bits,4);
+     NvGpuBary bary=gpu_bary_sample(s,t,x/scale,y/scale,nv2a_scaled_sample(x,scale),nv2a_scaled_sample(y,scale));
+     NvGpuSource source={0};
+     if(bary.covered)source=gpu_source_color(s,t,bary.l0,bary.l1,bary.l2);
+     NvGpuPixel pixel=gpu_commit(s,bary,source,surface[at].color,depth);
+     surface[at].color=pixel.color;
+     memcpy(&surface[at].depth_bits,&pixel.depth,4);
+     if(x%scale==scale/2 && y%scale==scale/2){
+      unsigned tile=((y/scale)/16*((s.width+15)/16)+(x/scale)/16)*4;
+      stats[tile+2]+=pixel.zpass;
+     }
+    }
+   }
+  }
+  for(unsigned i=0;i<128;i++)g.cache[i].decoded=saved_decoded[i];
+  return;
+ }
  assert(native_view.Width==state->width && native_view.Height==state->height && first+n<=g.queued_count);
  /* Native rectangles only generate candidates; exact shared edges and depth
   * remain authoritative. Visit all primitives in submission order per pixel. */
@@ -543,6 +569,8 @@ static NvGpuTri triangle(int width){
  t.inclusive[2]=nv2a_edge_inclusive(t.v[2].pos,t.v[0].pos,t.area);return t;
 }
 int main(int argc,char**argv){
+ int render_scale=argc>1 && !strncmp(argv[1],"native-scale-",13)?atoi(argv[1]+13):0;
+ if(render_scale)setenv("RECOMP_RENDER_SCALE",argv[1]+13,1);
  int restored_defaults=argc>1 && !strcmp(argv[1],"native-restored-defaults");
  int quiet_mode=argc>1 && (restored_defaults || !strcmp(argv[1],"native-quiet") || !strcmp(argv[1],"quiet-compute") || !strcmp(argv[1],"native-quiet-zpass-bad"));
  if(restored_defaults){
@@ -552,7 +580,7 @@ int main(int argc,char**argv){
  quiet_zpass_corrupt=argc>1 && !strcmp(argv[1],"native-quiet-zpass-bad");
  setenv("RECOMP_GPU_RASTER","1",1);setenv("RECOMP_GPU_ASYNC","0",1);
  setenv("RECOMP_GPU_CAPTURE","capture.bin",1);
- int coverage_mode=argc>1 && !strncmp(argv[1],"coverage",8);
+ int coverage_mode=argc>1 && (!strncmp(argv[1],"coverage",8) || render_scale==3);
  int native_mode=coverage_mode || (argc>1 && !strncmp(argv[1],"native",6));
  if(argc>1){
   if(!strcmp(argv[1],"native-uav-disabled"))setenv("RECOMP_GPU_UAV_ONLY","0",1);
@@ -629,6 +657,39 @@ int main(int argc,char**argv){
  if(legacy_mode){assert(device_calls==legacy_runtime+1 && selected_feature_level==D3D_FEATURE_LEVEL_11_0);puts("PASS: newer feature-level negotiation retries unsupported runtime enumerations and retains 11_0 compute support");}
  if(simple_mode){assert(!g.simple_shader && !g.native);puts("PASS: specialized compiler/self-test failure retains validated general compute backend");}
  assert(result==1 && g.init==3 && g.active && !color[0]);
+ if(render_scale){
+  NvGpuCount count;
+  assert(nv_gpu_sync(&count)==1 && g.scaled.scale==(unsigned)render_scale);
+  unsigned width=NV2A_SCANOUT_WIDTH,height=NV2A_SCANOUT_HEIGHT,scale=0;
+  size_t pixels=(size_t)width*height;
+  uint32_t *frame=calloc(pixels,4);
+  float *z=malloc(pixels*sizeof(*z));
+  assert(frame && z);
+  for(size_t i=0;i<pixels;i++)z[i]=100;
+  s.width=width;s.height=height;s.pitch=width*4;
+  t=triangle(16);
+  assert(nv_gpu_draw(&s,&t,1,(uint8_t*)frame,z,width,source)==1);
+  assert(nv_gpu_clear_color(&s,(uint8_t*)frame,14,14,16,16,0xFF113355)==1);
+  assert(nv_gpu_sync(&count)==1 && count.zpass && frame[14*width+14]==0xFF113355);
+  const uint32_t *large=nv_gpu_scaled_present((const uint8_t*)frame,frame,s.pitch,4,&scale);
+  assert(large && scale==(unsigned)render_scale);
+  unsigned high_width=width*scale;
+  assert(large[(size_t)(16*scale-1)*high_width+16*scale-1]==0xFF113355);
+  frame[0]=0xFF2468AB;
+  large=nv_gpu_scaled_present((const uint8_t*)frame,frame,s.pitch,4,&scale);
+  assert(large && large[0]==frame[0] && large[high_width*(scale-1)+scale-1]==frame[0]);
+  assert(nv_gpu_draw(&s,&t,1,(uint8_t*)frame,z,width,source)==1 && !g.scaled.reused);
+  assert(nv_gpu_sync(&count)==1);
+  assert(nv_gpu_draw(&s,&t,1,(uint8_t*)frame,z,width,source)==1 && g.scaled.reused);
+  assert(nv_gpu_sync(&count)==1);
+  large=nv_gpu_scaled_present((const uint8_t*)frame,frame,s.pitch,4,&scale);
+  assert(large && large[(size_t)(16*scale-1)*high_width+16*scale-1]==0xFF113355);
+  nv_gpu_scaled_cpu_write(frame,pixels*4);
+  assert(!nv_gpu_scaled_present((const uint8_t*)frame,frame,s.pitch,4,&scale));
+  free(frame);free(z);
+  puts("PASS: scaled raster startup, full-resolution handoff, ordered clear, native publication and stale snapshot rejection");
+  return 0;
+ }
  if(quiet_mode){
   NvGpuCount initial;assert(nv_gpu_sync(&initial)==1);
   assert(g.native==(restored_defaults || !strcmp(argv[1],"native-quiet")));
@@ -1013,11 +1074,15 @@ with tempfile.TemporaryDirectory(prefix='qpr2-gpu-device-') as d:
     src.write_text(api+'ptrdiff_t xbox_GetMemoryOffset(void){return 0;}\n#include "'+str(root/'third_party/xboxrecomp/src/kernel/nv2a_gpu_raster.c')+'"\n'+fixture)
     subprocess.run(['gcc','-std=gnu11','-O1','-Werror=implicit-function-declaration',
                     '-Werror=incompatible-pointer-types','-fsanitize=undefined,float-cast-overflow',
-                    '-fno-sanitize-recover=all','-I'+str(p),'-I'+str(root/'tools'),'-I'+str(root/'third_party/xboxrecomp/src/kernel'),
-                    str(src),str(root/'third_party/xboxrecomp/src/kernel/nv2a_vsh_interp.c'),str(root/'third_party/xboxrecomp/src/kernel/nv2a_gpu_tiles.c'),'-pthread','-lm','-o',str(exe)],check=True)
+                    '-fno-sanitize-recover=all','-I'+str(p),'-I'+str(root/'tools'),
+                    '-I'+str(root/'third_party/xboxrecomp/src'),'-I'+str(root/'third_party/xboxrecomp/src/kernel'),
+                    str(src),str(root/'third_party/xboxrecomp/src/kernel/nv2a_vsh_interp.c'),
+                    str(root/'third_party/xboxrecomp/src/kernel/nv2a_gpu_tiles.c'),
+                    str(root/'third_party/xboxrecomp/src/kernel/nv2a_combiner.c'),'-pthread','-lm','-o',str(exe)],check=True)
     mode_count=0
     import sys
     modes=[[],['device'],['compile'],['shader'],['async'],['thread'],['native'],['native-array'],['native-bad'],['native-order'],['native-math'],['native-compile'],['native-create'],['native-target'],['native-simple-compile'],['native-simple-create'],['native-simple-bad'],['native-simple-large-bad'],['native-simple-readback'],['native-simple-disabled'],['native-early-off'],['native-early-default'],['native-early-compile'],['native-early-simple-compile'],['simple-compile'],['simple-bad'],['legacy-111'],['legacy-11'],['fixed-compile'],['fixed-bad'],['fixed-disabled'],['report-compile'],['report-bad'],['report-disabled'],['coverage'],['coverage-array'],['coverage-tier1'],['coverage-tier2'],['coverage-unsupported'],['coverage-query'],['coverage-state'],['coverage-compile'],['coverage-create'],['coverage-bad'],['coverage-thin-bad'],['coverage-disabled'],['coverage-general'],['native-batch-bad'],['native-batch-disabled'],['coverage-batch-bad'],['native-index-fail'],['coverage-index-fail'],['native-clear-compile'],['native-clear-create'],['native-clear-bad'],['native-clear-disabled'],['native-clear-readback'],['native-uav-disabled'],['native-uav-bad'],['native-uav-readback'],['native-pool-disabled'],['native-disjoint-disabled'],['native-quiet'],['quiet-compute'],['native-quiet-zpass-bad'],['native-restored-defaults']]
+    modes += [['native-scale-2'], ['native-scale-3']]
     if len(sys.argv)>1:modes=[m for m in modes if (m[0] if m else 'compute') in sys.argv[1:]]
     assert modes
     for mode in modes:

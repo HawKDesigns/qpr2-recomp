@@ -34,7 +34,7 @@ const PAGES = [
   { id: 'controls', label: 'Controls' }, { id: 'buttons', label: 'Buttons' }, { id: 'data', label: 'Saves & Data' }, { id: 'launcher', label: 'Launcher' }, { id: 'about', label: 'About' }
 ];
 const PAGE_INFO = {
-  display: ['Display', 'The game renders at 640×480 in both 4:3 and 16:9. Window size and picture filtering control how that frame appears on your display.'],
+  display: ['Display', 'Internal render resolution controls the detail the GPU draws. Window size, aspect ratio and picture filtering control how the frame appears on your display.'],
   buttons: ['Buttons', 'Choose which button triggers each game control. A mapping applies to controllers and to the keyboard. Binding a button does not take it away from its own job, so to swap two buttons set both.'],
   performance: ['Performance', 'Choose the renderer and compare individual runtime paths. Reset this page to restore the clean v1 settings.'],
   audio: ['Audio', 'Buffering and mixer options for the emulated audio processor.'],

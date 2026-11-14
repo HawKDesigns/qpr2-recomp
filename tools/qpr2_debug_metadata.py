@@ -213,10 +213,12 @@ def export_failure(run_dir: Path) -> dict:
     manifest = read_json(run_dir / "run.json")
     log = read_log(run_dir / "run.stderr.log")
     fault = re.search(r"^\[CRASH\] access violation: (\w+) at host=(0x[0-9A-F]+) fault=(0x[0-9A-F]+)", log, re.M)
+    divide = re.search(r"^\[CRASH\] integer divide by zero at host=(0x[0-9A-F]+)", log, re.M)
     watchdog = re.search(r"^\[WATCHDOG\] no exit after (\d+)s; guest pc=(0x[0-9A-F]+) esp=(0x[0-9A-F]+)", log, re.M)
-    if not (fault or watchdog or manifest.get("status") in ("failed", "timed_out", "exit_status_unavailable")):
+    event = watchdog or fault or divide
+    if not (event or manifest.get("status") in ("failed", "timed_out", "exit_status_unavailable")):
         return {}
-    start = watchdog.start() if watchdog else fault.start() if fault else len(log)
+    start = event.start() if event else len(log)
     excerpt = log[start:]
     symbol_path = run_dir / "guest-symbols.json"
     catalog = read_json(symbol_path) if symbol_path.is_file() else {}
@@ -236,17 +238,20 @@ def export_failure(run_dir: Path) -> dict:
     result = {
         "schema_version": 1, "run_id": manifest["run_id"], "status": manifest["status"],
         "exit_code": manifest.get("exit_code"), "guest_pc_tracking": manifest.get("guest_pc_tracking"),
-        "reason": "watchdog" if watchdog else "access_violation" if fault else manifest["status"],
+        "reason": "watchdog" if watchdog else "access_violation" if fault else
+                  "integer_divide_by_zero" if divide else manifest["status"],
     }
     if watchdog:
         result.update(timeout_seconds=int(watchdog[1]), guest_esp=watchdog[3],
                       guest_pc=resolve(watchdog[2]) if int(watchdog[2], 16) else None)
-    elif fault:
+    elif fault or divide:
         pc = re.search(r"^  guest pc: ([0-9A-F]{8})$", excerpt, re.M)
         host_symbol = re.search(r"^  host symbol: (.+)$", excerpt, re.M)
-        result.update(access=fault[1], host_pc=fault[2], fault_address=fault[3],
+        result.update(host_pc=fault[2] if fault else divide[1],
                       host_symbol=host_symbol[1] if host_symbol else None,
                       guest_pc=resolve(pc[1]) if pc and int(pc[1], 16) else None)
+        if fault:
+            result.update(access=fault[1], fault_address=fault[3])
 
     regs = re.search(r"^ +(?:guest )?regs: (.+(?:\n +esi=[^\n]+)?)", excerpt, re.M)
     if regs:
