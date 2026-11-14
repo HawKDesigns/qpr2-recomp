@@ -32,6 +32,8 @@ jobs:
           gcc -std=c11 -O2 -fsanitize=undefined -fno-sanitize-recover=all tools/test_qpr2_frame_clock.c -o "$RUNNER_TEMP/qpr2-frame-clock"
           "$RUNNER_TEMP/qpr2-frame-clock"
           python3 tools/test_qpr2_present_lock.py
+          gcc -std=gnu11 -O2 -fsanitize=undefined -fno-sanitize-recover=all -ffunction-sections -fdata-sections -Ithird_party/xboxrecomp/src tools/test_qpr2_display_modes.c third_party/xboxrecomp/src/kernel/kernel_xbox.c -Wl,--gc-sections -o "$RUNNER_TEMP/qpr2-display-modes"
+          "$RUNNER_TEMP/qpr2-display-modes"
           python3 tools/test_qpr2_surface_copy.py
           python3 tools/test_qpr2_completion_token.py
           python3 tools/test_qpr2_readback_queue.py

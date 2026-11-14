@@ -6,6 +6,7 @@ s=(root/'third_party/xboxrecomp/src/video/fb_present.c').read_text()
 state=s[s.index('static volatile LONG s_fb_running;'):s.index('/* The last PVIDEO frame shown.')]
 helpers=s[s.index('/* Publish a resolved frame'):s.index('/* Title bar,')]
 shim='''#include "platform/frame_trace.h"
+#include "video/present_layout.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>

@@ -59,7 +59,7 @@ entry labels the corresponding `Track1.wav`. Tracks without a label appear as
 
 Every game setting maps to something that exists and was checked against the code. A setting left at its default is **not exported**, so the runtime and `rebuild-and-run.ps1` keep control of their own defaults. Settings are saved to `launcher/launcher.settings.json`.
 
-**Display** (the runtime reads these itself): window size (`RECOMP_WINDOW_SCALE`), start fullscreen (`RECOMP_FULLSCREEN`), the Direct3D 11 presenter (`RECOMP_D3D_PRESENT`), V-Sync (`RECOMP_PRESENT_VSYNC`) and picture filtering (`RECOMP_PRESENT_FILTER`). V-Sync and filtering only apply with the Direct3D 11 presenter, and the launcher dims them when it is off. **Monitor** is host code (`src/qpr2_display.c`): the runtime always opens on the primary monitor, so the host finds its window, moves it, and then triggers the runtime's own F11 handler.
+**Display** offers original 4:3 and Xbox widescreen 16:9 (`RECOMP_VIDEO_ASPECT`). Widescreen sets the guest's Xbox video preference and presents the 640×480 anamorphic frame in a 16:9 rectangle. Window size (`RECOMP_WINDOW_SCALE`) and start fullscreen (`RECOMP_FULLSCREEN`) affect presentation. Internal render resolution is currently fixed at 640×480. **Picture filtering** (`RECOMP_PRESENT_FILTER`) offers Smooth, Sharp pixels and Off in both Windows presenters. Off centers the frame at its original height with aspect correction and shrinks it only if needed to fit. **V-Sync** (`RECOMP_PRESENT_VSYNC`) applies to the Direct3D 11 swap chain (`RECOMP_D3D_PRESENT`). **Monitor** moves the window to the chosen display before enabling fullscreen.
 
 **Performance** controls the game renderer independently of Display. Clean v1
 uses native D3D11 rasterization with ROV and eligible GPU geometry. CPU raster
@@ -78,7 +78,7 @@ countdown or track-area performance comparisons.
 
 **Controls**: vibration (`RECOMP_RUMBLE`, runtime). **Stick deadzones, response curves, trigger threshold, invert, swap sticks and button mapping are host code** (`src/qpr2_input_config.c`). The runtime's Windows pad path passes XInput straight through, so the host transforms the 18-byte input block the game has just published, inside `qpr2_recovered_001A7D43`, before the game's own analog threshold. Order: remap, trigger threshold, deadzone and curve per stick, inversion, swap. Mapping means "this game control takes its value from that button"; the source keeps its own job unless you change it too (the launcher offers the swap when you bind). Mappings apply to the keyboard as well as controllers.
 
-**Not available** because nothing in the runtime or host can do it today: a frame-rate cap, widescreen or other aspect ratios (the picture is 640x480, letterboxed), and rebinding individual *keys* (the runtime's keyboard table is fixed; its `input_map` library supports bindings but exposes no setter). The Buttons page shows the fixed keyboard layout.
+The Buttons page shows the runtime's fixed keyboard layout.
 
 ## Upgrading from the standalone launcher
 
