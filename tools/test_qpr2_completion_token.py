@@ -61,6 +61,34 @@ int main(void){
  assert(!MEM(0x80070000));
  gpu_finish_named("fixture-cleanup");
  puts("PASS: failed marker Map cannot release a guest fence");
+ g.completion.reuse_enabled=1;
+ setup(1);draw();execute();
+ uint64_t waits=g.completion.waits;
+ for(unsigned value=11;value<=12;value++){
+  nv2a_pb_exec_fifo_begin();nv2a_pb_exec_method(0,0x1D70,value);nv2a_pb_exec_fifo_end();
+  assert(MEM(0x80070000)==value);
+ }
+ assert(g.completion.waits==waits+1 && g.completion.reused==1 && g.completion.unpublished);
+ assert(MEM(0x80050000)==0);
+ assert(nv_gpu_clear_depth(g.host_depth,g.depth_stride,42)==1);
+ nv2a_pb_exec_fifo_begin();nv2a_pb_exec_method(0,0x1D70,13);nv2a_pb_exec_fifo_end();
+ assert(MEM(0x80070000)==13 && g.completion.waits==waits+2 && g.completion.reused==1);
+ draw();execute();
+ nv2a_pb_exec_fifo_begin();nv2a_pb_exec_method(0,0x1D70,14);nv2a_pb_exec_fifo_end();
+ assert(MEM(0x80070000)==14 && g.completion.waits==waits+3 && g.completion.reused==1);
+ gpu_finish_named("flip");
+ assert(MEM(0x80050000)==0xFFFFFFFF);
+ nv2a_pb_exec_fifo_begin();nv2a_pb_exec_method(0,0x1D70,15);nv2a_pb_exec_fifo_end();
+ assert(MEM(0x80070000)==15 && g.completion.waits==waits+4 && g.completion.reused==1);
+ setup(1);draw();execute();
+ fflush(NULL);child=fork();assert(child>=0);
+ if(!child){
+  nv2a_pb_exec_fifo_begin();nv2a_pb_exec_method(0,0x1D70,99);
+  fail_next_map=1;nv2a_pb_exec_fifo_end();_exit(9);
+ }
+ assert(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==4);
+ assert(!MEM(0x80070000));
+ puts("PASS: consecutive fences reuse a confirmed marker; clears, draws and transfers require a fresh completion");
  return 0;
 }
 '''

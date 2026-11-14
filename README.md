@@ -201,6 +201,16 @@ If a scene key was pressed by mistake, find its segment in `frames.csv`.
 the summaries with that interval excluded and preserves the raw trace.
 `compare` accepts `--exclude-reference-segment` and `--exclude-candidate-segment`.
 
+Use **F1** for rider selection and **F10** for ATV selection. Hold each
+menu for a few seconds with the same rider or ATV and camera. Press **F4**
+when leaving the menu to clear its label.
+
+The **Reuse confirmed GPU completion** comparison switch
+(`RECOMP_GPU_COMPLETION_REUSE=1`) allows a guest fence or software event
+to reuse an already confirmed GPU completion if no further renderer work
+has been submitted. Compare marker counts, reused markers and completion
+Map time with the switch set to `0` on the same build.
+
 For a same-build depth-clear comparison, launch Benchmark once with
 `$env:RECOMP_GPU_DEPTH_CLEAR_RETIRE = '1'` and once with `'0'`. The candidate
 can omit an older queued depth write after a full overwrite of its host depth

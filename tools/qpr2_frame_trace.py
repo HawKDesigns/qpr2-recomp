@@ -35,9 +35,12 @@ RAW_BOUNDARY = ("raw_boundary_numeric", "raw_boundary_w", "raw_boundary_xy",
                 "raw_boundary_z", "raw_boundary_point_limit")
 RAW_COUNTS = ("raw_boundary_draws", "raw_boundary_vertices")
 DEPTH_CLEAR_COUNTS = ("depth_copies_retired_by_clear",)
+COMPLETION_COUNTS = ("completion_markers", "completion_markers_reused")
+PROFILE_COUNTS = DEPTH_CLEAR_COUNTS + COMPLETION_COUNTS
 FOOTER = 0xFFFFFFFF
 PRODUCERS = ("renderer", "window", "title")
-PHASES = ("unmarked", "boot", "preview", "countdown", "ahead", "behind", "unmarked", "video")
+PHASES = ("unmarked", "boot", "preview", "countdown", "ahead", "behind", "unmarked", "video",
+          "rider_menu", "atv_menu")
 THREAD_ROLES = ("guest_main", "fifo_executor", "gpu_startup", "presenter")
 WINDOW_NS = 5_000_000_000
 UINT32_MASK = 0xFFFFFFFF
@@ -327,8 +330,8 @@ def frame_profile(events: list[Event], rows: list[dict], integrity: dict) -> tup
                 key = RAW_COUNTS[event.arg0 - 30]
             elif 56 <= event.arg0 < 56 + len(RAW_BOUNDARY):
                 key = RAW_BOUNDARY[event.arg0 - 56]
-            elif event.arg0 == 61:
-                key = DEPTH_CLEAR_COUNTS[0]
+            elif 61 <= event.arg0 < 61 + len(PROFILE_COUNTS):
+                key = PROFILE_COUNTS[event.arg0 - 61]
             else:
                 continue
             row[key] = event.arg1 / 1000 if key.endswith("_ms") else event.arg1
@@ -362,7 +365,7 @@ def frame_profile(events: list[Event], rows: list[dict], integrity: dict) -> tup
     data = list(frames.values())
     for row in data:
         if row["profile_complete"]:
-            for key in CPU_FIELDS + dependencies + drain_counts + RAW_COUNTS + RAW_BOUNDARY + DEPTH_CLEAR_COUNTS:
+            for key in CPU_FIELDS + dependencies + drain_counts + RAW_COUNTS + RAW_BOUNDARY + PROFILE_COUNTS:
                 row.setdefault(key, 0)
     eligible = [row for row in data if row["profile_complete"] and not row["excluded"]]
     complete = (integrity["complete"] and not any(integrity["dropped"].values())
@@ -384,7 +387,7 @@ def frame_profile(events: list[Event], rows: list[dict], integrity: dict) -> tup
             "p95_ms": percentile(sorted(row["frame_ms"] for row in group), .95),
             "per_frame_mean": {key: statistics.mean(row[key] for row in group)
                                for key in CPU_FIELDS + dependencies + drain_counts + RAW_COUNTS + RAW_BOUNDARY +
-                               DEPTH_CLEAR_COUNTS + ("guest_fence_wait_ms",)},
+                               PROFILE_COUNTS + ("guest_fence_wait_ms",)},
             "gpu_samples_by_frame_time": {
                 label: {
                     key.removesuffix("_sample_ms"): {"total_ms": sum(row.get(key, 0) for row in sample),
@@ -401,7 +404,7 @@ def frame_profile(events: list[Event], rows: list[dict], integrity: dict) -> tup
                   "gpu_samples_without_flip": orphan_gpu_samples, "phases": cohorts,
                   "slowest_frames": worst,
                   "columns": list(CPU_FIELDS + dependencies + drain_counts + RAW_COUNTS + RAW_BOUNDARY +
-                      DEPTH_CLEAR_COUNTS + gpu_fields + gpu_counts + ("profile_complete",
+                      PROFILE_COUNTS + gpu_fields + gpu_counts + ("profile_complete",
                       "gpu_samples", "guest_fence_wait_ms", "guest_fence_waits_ended"))}
 
 
@@ -502,7 +505,7 @@ def compare(reference: Path, candidate: Path, exclude_reference=(), exclude_cand
                 mean = profile[phase]["per_frame_mean"]
                 phases[phase][label + "_profile"] = {
                     key: mean[key] for key in ("draw_requests", "fifo_ms", "queued_map_ms",
-                        "completion_map_ms", "target_depth_drains", *DEPTH_CLEAR_COUNTS)
+                        "completion_map_ms", "target_depth_drains", *PROFILE_COUNTS)
                 } | {"target_depth_ms": sum(mean[f"target_depth_{size}_ms"] for size in TARGET_SIZES)}
     return {"reference": before["run_id"], "candidate": after["run_id"], "warnings": warnings,
             "excluded_segments": {"reference": before.get("manually_excluded_segments", []),

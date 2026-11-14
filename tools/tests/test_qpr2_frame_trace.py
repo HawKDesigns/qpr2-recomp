@@ -142,12 +142,20 @@ class FrameTraceTest(unittest.TestCase):
                 record(36, 3, trace.DEPTH_DRAIN, frame=2, args=(256 | (256 << 16), 0x203, 2000)),
                 record(130, 4, trace.FLIP, frame=2, args=(7, 0, 0)),
                 record(130, 5, trace.CPU_METRIC, frame=2, args=(58, 1, 0)),
-                record(130, 6, trace.PROFILE_FRAME, frame=2),
+                record(130, 6, trace.CPU_METRIC, frame=2, args=(62, 3, 0)),
+                record(130, 7, trace.CPU_METRIC, frame=2, args=(63, 2, 0)),
+                record(130, 8, trace.PROFILE_FRAME, frame=2),
                 record(140, 1, trace.OVERLAY, producer=1, args=(1, 0, 0)),
-                record(160, 7, trace.FLIP, frame=3),
+                record(160, 9, trace.FLIP, frame=3),
                 record(170, 2, trace.OVERLAY, producer=1),
-                record(190, 8, trace.FLIP, frame=4),
-                record(600, 9, trace.FLIP, frame=5),
+                record(190, 10, trace.FLIP, frame=4),
+                record(600, 11, trace.FLIP, frame=5),
+                record(650, 3, trace.PHASE, producer=1, args=(8, 1, 0)),
+                record(660, 12, trace.FLIP, frame=6),
+                record(690, 13, trace.FLIP, frame=7),
+                record(700, 4, trace.PHASE, producer=1, args=(9, 1, 0)),
+                record(720, 14, trace.FLIP, frame=8),
+                record(740, 15, trace.FLIP, frame=9),
                 record(4850, 2, trace.GUEST_PC, producer=2, args=(0x101, 17, 0)),
                 record(4900, 3, trace.THREAD_CPU, producer=2, frame=1, args=(10_000_000, 0, 42)),
                 record(5900, 4, trace.THREAD_CPU, producer=2, frame=1, args=(15_000_000, 0, 42)),
@@ -170,3 +178,7 @@ class FrameTraceTest(unittest.TestCase):
             self.assertEqual((drain["producer_width"], drain["most_recent_binding"]["width"],
                               drain["total_ms"], drain["publishes_depth"]), (256, 640, 2, True))
             self.assertEqual(profile["phases"]["preview"]["per_frame_mean"]["raw_boundary_xy"], 1)
+            self.assertEqual(profile["phases"]["preview"]["per_frame_mean"]["completion_markers"], 3)
+            self.assertEqual(profile["phases"]["preview"]["per_frame_mean"]["completion_markers_reused"], 2)
+            self.assertEqual(summary["phases"]["rider_menu"]["median_ms"], 30)
+            self.assertEqual(summary["phases"]["atv_menu"]["median_ms"], 20)
