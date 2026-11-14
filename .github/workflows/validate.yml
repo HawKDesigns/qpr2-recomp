@@ -17,6 +17,8 @@ jobs:
           tools/qpr2_pipeline.py
           tools/qpr2_debug_metadata.py
           tools/qpr2_frame_trace.py
+          tools/qpr2_link_check.py
+          tools/qpr2_run_posix.py
           tools/bootstrap_xboxrecomp.py
           tools/tests/test_qpr2_pipeline.py
       - name: Run unit tests
@@ -33,6 +35,15 @@ jobs:
           python3 tools/test_qpr2_surface_copy.py
           python3 tools/test_qpr2_completion_token.py
           python3 tools/test_qpr2_readback_queue.py
+      - name: Link the title against the runtime without game code (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libsdl2-dev libssl-dev
+          python3 tools/qpr2_link_check.py
+      - name: Cross-link the Windows configuration (MinGW-w64)
+        run: |
+          sudo apt-get install -y gcc-mingw-w64-x86-64-win32 g++-mingw-w64-x86-64-win32
+          python3 tools/qpr2_link_check.py --toolchain tools/mingw-w64-x86_64.cmake
       - name: Reject accidentally committed retail or generated files
         shell: bash
         run: |

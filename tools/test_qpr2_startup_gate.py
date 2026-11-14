@@ -17,6 +17,8 @@ source=r'''
 static int callbacks_ok=1,callback_calls;
 static unsigned old_revision;
 static int qpr2_validate_level_callbacks(void){++callback_calls;return callbacks_ok;}
+/* The gate slice of main.c also reaches the input configuration call. */
+static void qpr2_input_config_init(void){}
 '''+revision+r'''
 static unsigned linked_revision(void){return old_revision?old_revision:nv2a_pb_exec_overlay_revision();}
 #define nv2a_pb_exec_overlay_revision linked_revision

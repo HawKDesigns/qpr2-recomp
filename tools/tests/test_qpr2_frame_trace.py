@@ -182,3 +182,31 @@ class FrameTraceTest(unittest.TestCase):
             self.assertEqual(profile["phases"]["preview"]["per_frame_mean"]["completion_markers_reused"], 2)
             self.assertEqual(summary["phases"]["rider_menu"]["median_ms"], 30)
             self.assertEqual(summary["phases"]["atv_menu"]["median_ms"], 20)
+
+    def test_a_run_without_manual_marks_is_flagged(self):
+        with tempfile.TemporaryDirectory() as name:
+            run = Path(name)
+            (run / "run.json").write_text(json.dumps({
+                "run_id": "unmarked", "mode": "Benchmark", "status": "exited", "environment": {},
+            }), encoding="utf-8")
+            records = [
+                record(0, 1, trace.PHASE, producer=2, args=(1, 0, 0)),     # automatic boot mark only
+                record(10, 1, trace.FLIP, frame=1, args=(0, 0, 1)),
+                record(10, 2, trace.VBLANK_EVENTS, frame=1, args=(10, 0, 0)),
+                record(40, 3, trace.FLIP, frame=2, args=(2, 0, 2)),
+                record(40, 4, trace.VBLANK_EVENTS, frame=2, args=(11, 0, 0)),
+                record(70, 5, trace.FLIP, frame=3, args=(4, 0, 3)),
+                record(70, 6, trace.VBLANK_EVENTS, frame=3, args=(12, 0, 0)),
+                *(record(80, 0, trace.FOOTER, producer=i) for i in range(3)),
+            ]
+            (run / "frame-trace.bin").write_bytes(
+                trace.HEADER.pack(b"QPTR", 4, trace.RECORD.size, 3) + b"".join(records))
+            summary = trace.export(run)
+            self.assertEqual(len(summary["warnings"]), 1)
+            self.assertIn("no manual phase marks", summary["warnings"][0])
+            boot = summary["phases"]["boot"]
+            self.assertTrue(boot["sustained_30fps"])       # two 30 ms frames
+            self.assertFalse(boot["sustained_60fps"])
+            self.assertAlmostEqual(boot["emulated_vblank_hz"], 4 / 0.06)
+            self.assertAlmostEqual(boot["delivered_vblank_events_hz"], 2 / 0.06)
+            self.assertIsNone(boot["kernel_interrupt_vblank_hz"])

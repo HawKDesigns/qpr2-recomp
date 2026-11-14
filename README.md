@@ -14,6 +14,10 @@ ordered FIFO completion, XMV clock and recovered title callbacks. The clean
 Dunes1 baseline is accepted. See the [requirements audit](docs/CLEAN_V1_AUDIT.md)
 for the remaining checks.
 
+Linux x86-64 builds the same title code against the runtime's software
+raster for boot and tooling work. Windows remains the performance target. See
+[docs/LINUX.md](docs/LINUX.md).
+
 | Reference | QPR2 | XboxRecomp |
 | --- | --- | --- |
 | Last tested v126 | `0f55e19f3e04d7d7587920f2d6a34618db48ee51` | `92a5f030d0e9442d35e7fdfb8cb86344716c677f` |
@@ -135,7 +139,9 @@ Use the same Dunes1 setup across runs. With the game window focused, mark
 countdown with **F5**, clear track ahead with **F6**, and following visible AI
 with **F7**. Press **F4** when those labels no longer apply. The report
 excludes intervals that cross phase changes or overlap F8 capture, and shows
-missing records. Use
+missing records. Each phase lists the worst frame, the seconds measured and
+the counts over 16.67, 33.33, 50 and 100 ms. A run with no F5–F7 marks is
+flagged, because menus, preview and race are then averaged into one phase. Use
 `-NoFrameTrace` for a same-build recorder overhead comparison.
 
 ```powershell
@@ -204,6 +210,12 @@ the summaries with that interval excluded and preserves the raw trace.
 Use **F1** for rider selection and **F10** for ATV selection. Hold each
 menu for a few seconds with the same rider or ATV and camera. Press **F4**
 when leaving the menu to clear its label.
+
+**Release fences without waiting for the GPU** is a separate experiment
+(`RECOMP_GPU_COMPLETION_ASYNC=1`, off by default). It can notify the guest
+before GPU completion. The runtime takes a blocking marker after 32 early
+releases by default (`RECOMP_GPU_COMPLETION_ASYNC_MAX`). Test it separately
+from confirmed completion reuse and check rendered output and race flow.
 
 The **Reuse confirmed GPU completion** comparison switch
 (`RECOMP_GPU_COMPLETION_REUSE=1`) allows a guest fence or software event

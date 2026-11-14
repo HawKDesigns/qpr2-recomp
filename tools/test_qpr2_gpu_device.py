@@ -295,6 +295,8 @@ static HRESULT ID3D11DeviceContext_Map(ID3D11DeviceContext*c,ID3D11Resource*b,un
  (void)c;if(fail_next_map){fail_next_map=0;return -1;}assert(!sub && mode==D3D11_MAP_READ && !flags && b->desc.Usage==D3D11_USAGE_STAGING && !b->mapped);b->mapped=1;out->pData=b->data;return 0;
 }
 static void ID3D11DeviceContext_Unmap(ID3D11DeviceContext*c,ID3D11Resource*b,unsigned sub){(void)c;assert(!sub && b->mapped);b->mapped=0;}
+static unsigned context_flushes;
+static void ID3D11DeviceContext_Flush(ID3D11DeviceContext*c){(void)c;++context_flushes;}
 static HRESULT ID3D11Device_GetDeviceRemovedReason(ID3D11Device*d){(void)d;return 0;}
 static void ID3D11DeviceContext_CSSetShader(ID3D11DeviceContext*c,ID3D11ComputeShader*s,void*p,unsigned n){(void)c;assert((s==&shader || s==&report_shader || s==&clear_shader || s==&bridge_shader) && !p && !n);bound_compute=s;}
 static void ID3D11DeviceContext_CSSetShaderResources(ID3D11DeviceContext*c,unsigned start,unsigned n,ID3D11ShaderResourceView*const*v){(void)c;assert(!start && n==5);memcpy(bound_srv,v,sizeof bound_srv);}

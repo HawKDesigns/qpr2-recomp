@@ -130,8 +130,10 @@ int main(int argc, char **argv)
     }
     for (uint32_t frame = 1; frame <= 4172; ++frame) {
         xbox_frame_trace_guest_ticks(2);
+        xbox_frame_trace_vblank_event();
         xbox_frame_trace_note(XBOX_TRACE_RENDERER, XBOX_TRACE_FLIP, frame,
-                              xbox_frame_trace_guest_tick_count(), frame, frame);
+                              xbox_frame_trace_guest_tick_count(),
+                              xbox_frame_trace_vblank_event_count(), frame);
     }
     xbox_frame_trace_note(XBOX_TRACE_WINDOW, XBOX_TRACE_PHASE, 0, XBOX_PHASE_AHEAD, 1, 0);
     xbox_frame_trace_stop();
@@ -153,7 +155,7 @@ class FrameTraceRecorderTest(unittest.TestCase):
             }), encoding="utf-8")
             subprocess.run([
                 "gcc", "-std=c11", "-pthread", "-O2", "-Wall", "-Wextra", "-Werror",
-                "-DXBOX_FRAME_TELEMETRY=1", "-I", str(run), "-I", str(PLATFORM),
+                "-DXBOX_FRAME_TELEMETRY=1", "-DXBOX_FRAME_TRACE_WIN32_SHIM=1", "-I", str(run), "-I", str(PLATFORM),
                 "-I", str(PLATFORM.parent), "-I", str(PLATFORM.parent / "kernel"),
                 str(PLATFORM / "frame_trace.c"),
                 str(PLATFORM.parent / "kernel/nv2a_frame_profile.c"), str(run / "driver.c"), "-o", str(run / "driver"),
@@ -164,6 +166,7 @@ class FrameTraceRecorderTest(unittest.TestCase):
             self.assertEqual(result["integrity"]["dropped"]["renderer"], 76)
             self.assertEqual(result["phases"]["boot"]["flip_count"], 4096)
             self.assertEqual(result["phases"]["boot"]["guest_tick_hz"], 2000)
+            self.assertEqual(result["phases"]["boot"]["emulated_vblank_hz"], 2000)
             self.assertEqual([mark["phase"] for mark in result["phase_markers"]], ["boot", "ahead"])
             subprocess.run([str(run / "driver"), "profile"], cwd=run, check=True, timeout=10,
                            env={**os.environ, "RECOMP_FRAME_PROFILE": "1"})

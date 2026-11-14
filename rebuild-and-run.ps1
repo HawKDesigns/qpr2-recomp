@@ -194,6 +194,8 @@ function Invoke-Qpr2Python {
 }
 
 
+# Host facts for the run manifest. Every query is optional: a machine where CIM
+# is unavailable still builds and runs, and the field is recorded as null.
 function Get-Qpr2RuntimeSource([string]$PinnedRevision, [bool]$TitleIsArchive) {
     $lifter = Join-Path $runtimePath "tools/recomp/__main__.py"
     if (-not (Test-Path -LiteralPath $lifter -PathType Leaf)) {
@@ -218,13 +220,15 @@ function Get-Qpr2RuntimeSource([string]$PinnedRevision, [bool]$TitleIsArchive) {
     $frameTraceSource = Join-Path $runtimePath "src/platform/frame_trace.c"
     $frameTraceHeader = Join-Path $runtimePath "src/platform/frame_trace.h"
     $profileHeader = Join-Path $runtimePath "src/kernel/nv2a_frame_profile.h"
-    if (-not (Test-Path -LiteralPath $rendererHeader -PathType Leaf) -or
+    $threadCpuSource = Join-Path $runtimePath "src/platform/thread_cpu.c"
+    if (-not (Test-Path -LiteralPath $threadCpuSource -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $rendererHeader -PathType Leaf) -or
         -not (Test-Path -LiteralPath $frameTraceSource -PathType Leaf) -or
         -not (Test-Path -LiteralPath $frameTraceHeader -PathType Leaf) -or
         -not (Select-String -LiteralPath $frameTraceHeader -Quiet -SimpleMatch 'XBOX_TRACE_DEPTH_DRAIN') -or
         -not (Test-Path -LiteralPath $profileHeader -PathType Leaf) -or
         -not (Select-String -LiteralPath $profileHeader -Quiet -SimpleMatch 'NV_FRAME_COMPLETION_REUSED') -or
-        -not (Select-String -LiteralPath $rendererHeader -Quiet -Pattern '^#define QPR2_RENDERER_REVISION 1701u$') -or
+        -not (Select-String -LiteralPath $rendererHeader -Quiet -Pattern '^#define QPR2_RENDERER_REVISION 1702u$') -or
         -not (Select-String -LiteralPath $lifter -Quiet -SimpleMatch '--runtime-instruction-hooks')) {
         throw "The XboxRecomp source in $runtimePath is incompatible. Use the QPR2 runtime archive for $PinnedRevision."
     }

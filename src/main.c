@@ -8,8 +8,17 @@ extern void qpr2_mesh_args_dump(void);
  * a user's legally owned default.xbe and is intentionally not distributed.
  */
 
+#if defined(_WIN32)
 #include <windows.h>
 #include <dbghelp.h>
+#else
+/* POSIX hosts (Linux first): the runtime's SDL window owns the process main
+ * thread and the boot sequence below runs on its guest thread. */
+#include <signal.h>
+#include <ucontext.h>
+#include <unistd.h>
+#include "video/video_player.h"   /* xbox_HostWindowMain */
+#endif
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -22,6 +31,7 @@ extern void qpr2_mesh_args_dump(void);
 #include "qpr2_display.h"
 #include "qpr2_input_config.h"
 #include "platform/frame_trace.h"
+#include "platform/thread_cpu.h"
 
 extern RECOMP_TLS uint32_t g_eax, g_ecx, g_edx, g_esp;
 extern RECOMP_TLS uint32_t g_ebx, g_esi, g_edi;
@@ -41,8 +51,10 @@ typedef struct MCPXAPUState MCPXAPUState;
 extern MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr);
 extern void mcpx_apu_shutdown(MCPXAPUState *state);
 extern MCPXAPUState *g_apu_state;
+#if defined(_WIN32)
 extern bool apu_hook_handle_mmio(PCONTEXT context, uintptr_t fault_address,
                                  uint32_t xbox_va, int is_write);
+#endif
 
 /* QPR2 talks directly to the MCPX OHCI controllers through its linked XAPI.
  * XboxRecomp's USB model protects those register pages so this host VEH must
@@ -57,7 +69,7 @@ extern void xbox_OhciReport(void);
 #define QPR2_APU_TRAP_BASE 0xFE800000u
 #define QPR2_APU_TRAP_END  0xFE830000u
 
-static BOOL load_file(const char *path, void **out_data, size_t *out_size)
+static int load_file(const char *path, void **out_data, size_t *out_size)
 {
     FILE *file;
     long length;
@@ -66,13 +78,13 @@ static BOOL load_file(const char *path, void **out_data, size_t *out_size)
     file = fopen(path, "rb");
     if (!file) {
         fprintf(stderr, "[BOOT] Cannot open %s\n", path);
-        return FALSE;
+        return 0;
     }
     if (fseek(file, 0, SEEK_END) != 0 || (length = ftell(file)) <= 0 ||
         fseek(file, 0, SEEK_SET) != 0) {
         fclose(file);
         fprintf(stderr, "[BOOT] Cannot determine XBE size\n");
-        return FALSE;
+        return 0;
     }
 
     data = malloc((size_t)length);
@@ -80,14 +92,25 @@ static BOOL load_file(const char *path, void **out_data, size_t *out_size)
         free(data);
         fclose(file);
         fprintf(stderr, "[BOOT] Cannot read complete XBE\n");
-        return FALSE;
+        return 0;
     }
 
     fclose(file);
     *out_data = data;
     *out_size = (size_t)length;
-    return TRUE;
+    return 1;
 }
+
+static void qpr2_report_guest_registers(void)
+{
+    fprintf(stderr,
+            "  guest regs: eax=%08X ecx=%08X edx=%08X ebx=%08X\n"
+            "              esi=%08X edi=%08X esp=%08X\n",
+            g_eax, g_ecx, g_edx, g_ebx, g_esi, g_edi, g_esp);
+    fprintf(stderr, "  guest pc: %08X\n", (uint32_t)g_recomp_pc);
+}
+
+#if defined(_WIN32)
 
 static void describe_host_address(void *address)
 {
@@ -154,11 +177,7 @@ static LONG CALLBACK qpr2_exception_handler(PEXCEPTION_POINTERS ep)
                 operation,
                 (unsigned long long)ep->ContextRecord->Rip,
                 (unsigned long long)fault);
-        fprintf(stderr,
-                "  guest regs: eax=%08X ecx=%08X edx=%08X ebx=%08X\n"
-                "              esi=%08X edi=%08X esp=%08X\n",
-                g_eax, g_ecx, g_edx, g_ebx, g_esi, g_edi, g_esp);
-        fprintf(stderr, "  guest pc: %08X\n", (uint32_t)g_recomp_pc);
+        qpr2_report_guest_registers();
         if (g_xbox_mem_offset) {
             fprintf(stderr, "  possible guest VA: %08X\n",
                     (uint32_t)(fault - (uintptr_t)g_xbox_mem_offset));
@@ -173,16 +192,100 @@ static LONG CALLBACK qpr2_exception_handler(PEXCEPTION_POINTERS ep)
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
-int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
-                   LPSTR command_line, int show)
+static void qpr2_install_fault_handler(void)
+{
+    SymSetOptions(SYMOPT_DEFERRED_LOADS | SYMOPT_UNDNAME);
+    SymInitialize(GetCurrentProcess(), NULL, TRUE);
+    AddVectoredExceptionHandler(1, qpr2_exception_handler);
+}
+
+static void qpr2_fatal_message(const char *text)
+{
+    MessageBoxA(NULL, text, "QPR2 recomp", MB_ICONERROR);
+}
+
+#else /* POSIX */
+
+/* The guest main stack is one fixed arena, so the crash dump can bound its
+ * reads without a VirtualQuery equivalent. Matches the loader's
+ * "Stack: 8192 KB at Xbox VA 0x00780000" line. */
+#define QPR2_STACK_ARENA_BASE 0x00780000u
+#define QPR2_STACK_ARENA_END  0x00F80000u
+
+static void qpr2_crash_stack_dump(void)
+{
+    unsigned i;
+    fprintf(stderr, "[GUEST-STACK] from=%08X\n", g_esp);
+    for (i = 0; i < 32; ++i) {
+        uint32_t va = g_esp + i * 4u;
+        if (va < QPR2_STACK_ARENA_BASE || va + 4u > QPR2_STACK_ARENA_END) break;
+        fprintf(stderr, "  %08X: %08X\n", va,
+                *(const volatile uint32_t *)((uintptr_t)va + g_xbox_mem_offset));
+    }
+}
+
+/* SIGSEGV/SIGBUS: trapped register windows (APU, AC'97, OHCI) are emulated by
+ * the runtime and the thread resumes. Anything else is a crash: report the
+ * same context as the Windows handler, then let the default action run. */
+static void qpr2_posix_fault_handler(int sig, siginfo_t *info, void *ucv)
+{
+    uintptr_t fault = (uintptr_t)info->si_addr;
+    struct sigaction dfl;
+
+    if (xbox_PosixMmioFault(ucv, fault))
+        return;
+
+    fprintf(stderr, "[CRASH] %s at fault=0x%llX\n",
+            sig == SIGBUS ? "bus error" : "access violation",
+            (unsigned long long)fault);
+    qpr2_report_guest_registers();
+    if (g_xbox_mem_offset)
+        fprintf(stderr, "  possible guest VA: %08X\n",
+                (uint32_t)(fault - (uintptr_t)g_xbox_mem_offset));
+    qpr2_mesh_args_dump();
+    qpr2_ui_trace_dump();
+    qpr2_crash_stack_dump();
+    fflush(stderr);
+
+    memset(&dfl, 0, sizeof(dfl));
+    dfl.sa_handler = SIG_DFL;
+    sigaction(sig, &dfl, NULL);   /* returning re-raises under the default */
+}
+
+static void qpr2_install_fault_handler(void)
+{
+    /* A fault can arrive on any guest thread, including one whose own stack
+     * is what overflowed, so handle it on a dedicated stack. */
+    static uint8_t alt_stack[64 * 1024];
+    stack_t ss;
+    struct sigaction sa;
+
+    memset(&ss, 0, sizeof(ss));
+    ss.ss_sp = alt_stack;
+    ss.ss_size = sizeof(alt_stack);
+    sigaltstack(&ss, NULL);
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = qpr2_posix_fault_handler;
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_NODEFER;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGSEGV, &sa, NULL);
+    sigaction(SIGBUS, &sa, NULL);
+}
+
+static void qpr2_fatal_message(const char *text)
+{
+    fprintf(stderr, "[BOOT] %s\n", text);
+}
+
+#endif /* _WIN32 */
+
+/* The boot sequence shared by every host. On Windows it runs on the process
+ * main thread; on POSIX hosts xbox_HostWindowMain runs it on the guest thread
+ * while the window keeps the main thread. */
+static int qpr2_guest_main(void)
 {
     void *xbe_data = NULL;
     size_t xbe_size = 0;
-
-    (void)instance;
-    (void)previous;
-    (void)command_line;
-    (void)show;
 
     setvbuf(stdout, NULL, _IONBF, 0);
     int log_buffered = qpr2_log_buffer_init(stderr);
@@ -201,15 +304,11 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
     printf("Title ID: %s | entry: 0x%08X | XBE SHA-256: %s\n",
            QPR2_TITLE_ID_TEXT, QPR2_ENTRY_POINT, QPR2_XBE_SHA256);
 
-    SymSetOptions(SYMOPT_DEFERRED_LOADS | SYMOPT_UNDNAME);
-    SymInitialize(GetCurrentProcess(), NULL, TRUE);
-    AddVectoredExceptionHandler(1, qpr2_exception_handler);
+    qpr2_install_fault_handler();
 
     if (!load_file(QPR2_XBE_PATH, &xbe_data, &xbe_size)) {
-        MessageBoxA(NULL,
-                    "default.xbe was not found. Extract your legally owned "
-                    "disc to the game folder first.",
-                    "QPR2 recomp", MB_ICONERROR);
+        qpr2_fatal_message("default.xbe was not found. Extract your legally owned "
+                           "disc to the game folder first.");
         return 1;
     }
 
@@ -260,19 +359,27 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
         fprintf(stderr,
                 "[BOOT] flat dispatch unavailable; using binary-search dispatch\n");
     }
-    wchar_t *trace_path = _wgetenv(L"QPR2_FRAME_TRACE_PATH");
-    if (trace_path && *trace_path) {
-        xbox_frame_trace_thread(XBOX_TRACE_GUEST_MAIN);
+    xbox_frame_trace_thread(XBOX_TRACE_GUEST_MAIN);
 #if defined(RECOMP_ENABLE_GUEST_PC)
-        xbox_frame_trace_main_pc(&g_recomp_pc);
+    xbox_frame_trace_main_pc(&g_recomp_pc);
 #endif
-        if (xbox_frame_trace_start(trace_path))
+#if defined(_WIN32)
+    wchar_t *trace_path = _wgetenv(L"QPR2_FRAME_TRACE_PATH");
+    int trace_started = trace_path && *trace_path && xbox_frame_trace_start(trace_path);
+#else
+    const char *trace_path = getenv("QPR2_FRAME_TRACE_PATH");
+    int trace_started = trace_path && *trace_path && xbox_frame_trace_start_utf8(trace_path);
+#endif
+    if (trace_path && *trace_path) {
+        if (trace_started)
             xbox_frame_trace_note(XBOX_TRACE_TITLE, XBOX_TRACE_PHASE, 0, XBOX_PHASE_BOOT, 0, 0);
         else
             fprintf(stderr, "[FRAME-TRACE] could not start recorder\n");
     }
     xbox_WatchdogStart();
     qpr2_display_start();
+    /* The thread that runs the title's main loop, for the [THREAD-CPU] report. */
+    xbox_ThreadCpuRegister("guest-main");
 
     printf("[BOOT] runtime initialized; entering recompiled code\n");
     xbe_entry_point();
@@ -290,10 +397,31 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
     return 0;
 }
 
+#if defined(_WIN32)
+int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
+                   LPSTR command_line, int show)
+{
+    (void)instance;
+    (void)previous;
+    (void)command_line;
+    (void)show;
+    return qpr2_guest_main();
+}
+
 int main(int argc, char **argv)
 {
     (void)argc;
     (void)argv;
     return WinMain(GetModuleHandle(NULL), NULL, GetCommandLineA(), SW_SHOW);
 }
+#else
+int main(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+    /* Opens the SDL window when RECOMP_FB_WINDOW is set and a display exists;
+     * otherwise (or with RECOMP_HEADLESS=1) the guest runs on this thread. */
+    return xbox_HostWindowMain(qpr2_guest_main);
+}
+#endif
 

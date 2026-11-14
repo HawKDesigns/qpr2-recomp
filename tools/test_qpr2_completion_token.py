@@ -13,19 +13,80 @@ fixture = fixture.replace(
     'assert(!g.active && !g.pending_count && !g.queued_count && !g.readback_failed);',
     'assert(!g.queued_count && !g.readback_failed);', 1)
 fixture = fixture[:fixture.index('int main(int argc,char **argv)')] + r'''
+/* RECOMP_GPU_COMPLETION_ASYNC: a completion-only fence is released once its
+ * commands are submitted. Everything that reads GPU results must still see
+ * them, in order, and a blocking marker must still bound the run. */
+static int async_main(void){
+ setenv("RECOMP_GPU_RASTER","1",1);setenv("RECOMP_GPU_ASYNC","0",1);
+ setenv("RECOMP_GPU_COMPLETION_TOKEN","1",1);
+ setenv("RECOMP_GPU_COMPLETION_ASYNC","1",1);setenv("RECOMP_GPU_COMPLETION_ASYNC_MAX","2",1);
+ setenv("RECOMP_GPU_DIAGNOSTIC_COUNTERS","0",1);
+ native_supported=1;coverage_tier=3;assert(nv_gpu_available() && g.native && g.completion.enabled);
+ assert(g.completion.async_enabled && g.completion.async_limit==2);
+ MEM(0x130000)=0x110000;
+ assert(!xbox_Nv2aCommandFence(0x130000,0x30,8,32));
+ setup(1);draw();execute();
+ unsigned flushes=context_flushes;
+ nv2a_pb_exec_fifo_begin();nv2a_pb_exec_method(0,0x1D70,7);nv2a_pb_exec_fifo_end();
+ assert(MEM(0x80070000)==7 && g.active && g.completion.unpublished);
+ assert(g.completion.waits==0 && g.completion.async_releases==1 && g.completion.async_forced==0);
+ assert(context_flushes==flushes+1 && g.readbacks==0 && MEM(0x80050000)==0);
+ nv2a_pb_exec_guest_access(0x80050000,4);
+ assert(!g.active && !g.completion.unpublished && MEM(0x80050000)==0xFFFFFFFF);
+ assert(g.completion.access_drains==1 && g.readbacks==1);
+ puts("PASS: async fence releases with no marker Map; CPU target read still publishes exact pixels");
+ setup(1);draw();execute();
+ nv2a_pb_exec_fifo_begin();nv2a_pb_exec_method(0,0x1D70,8);nv2a_pb_exec_fifo_end();
+ assert(MEM(0x80070000)==8 && g.active && MEM(0x80050000)==0);
+ assert(g.completion.waits==0 && g.completion.async_releases==2);
+ gpu_finish_named("flip");
+ assert(!g.active && MEM(0x80050000)==0xFFFFFFFF && s_gpu.zpass_count);
+ puts("PASS: flip after an async fence drains deferred pixels and visibility counters");
+ setup(1);draw();execute();
+ nv2a_pb_exec_fifo_begin();nv2a_pb_exec_method(0,0x1D70,9);nv2a_pb_exec_fifo_end();
+ assert(MEM(0x80070000)==9 && g.completion.waits==1 && g.completion.async_forced==1);
+ assert(g.completion.async_releases==2 && g.active && MEM(0x80050000)==0);
+ puts("PASS: the third consecutive completion takes the blocking marker (limit 2)");
+ nv2a_pb_exec_fifo_begin();nv2a_pb_exec_method(0,0x1D70,10);nv2a_pb_exec_fifo_end();
+ assert(MEM(0x80070000)==10 && g.completion.waits==1 && g.completion.async_releases==3);
+ s_gpu.zpass_count=0;gpu_finish_named("visibility-report");
+ assert(g.active && s_gpu.zpass_count && !MEM(0x80050000));
+ gpu_finish_named("fixture-cleanup");
+ puts("PASS: visibility report after an async fence reads the retained counters");
+ /* Fence 10 was the first release since the forced marker, so fence 11 is
+  * the second; the one after it is forced, and its Map fails: no release. */
+ setup(1);draw();execute();
+ nv2a_pb_exec_fifo_begin();nv2a_pb_exec_method(0,0x1D70,11);nv2a_pb_exec_fifo_end();
+ assert(MEM(0x80070000)==11 && g.completion.waits==1);
+ assert(g.completion.async_releases==4 && g.completion.async_forced==1);
+ gpu_finish_named("fixture-cleanup");
+ setup(1);draw();execute();
+ fflush(NULL);pid_t child=fork();assert(child>=0);
+ if(!child){nv2a_pb_exec_fifo_begin();nv2a_pb_exec_method(0,0x1D70,99);
+  fail_next_map=1;nv2a_pb_exec_fifo_end();_exit(9);}
+ int status;assert(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==4);
+ assert(!MEM(0x80070000));          /* setup() cleared it; fence 99 never landed */
+ gpu_finish_named("fixture-cleanup");
+ puts("PASS: a failed forced marker Map still cannot release a guest fence");
+ return 0;
+}
 int main(void){
  ram=mmap(NULL,0x84000000ull,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_ANONYMOUS|MAP_NORESERVE,-1,0);
  assert(ram!=MAP_FAILED);g_memory_offset=(ptrdiff_t)ram;
+ if(getenv("FIXTURE_ASYNC"))return async_main();
+ assert(!getenv("RECOMP_GPU_COMPLETION_ASYNC"));
  setenv("RECOMP_GPU_RASTER","1",1);setenv("RECOMP_GPU_ASYNC","0",1);
  setenv("RECOMP_GPU_COMPLETION_TOKEN","1",1);
  setenv("RECOMP_GPU_DIAGNOSTIC_COUNTERS","0",1);
  native_supported=1;coverage_tier=3;assert(nv_gpu_available() && g.native && g.completion.enabled);
+ assert(!g.completion.async_enabled);           /* off unless requested */
  MEM(0x130000)=0x110000;
  assert(!xbox_Nv2aCommandFence(0x130000,0x30,8,32));
  setup(1);draw();execute();
  nv2a_pb_exec_fifo_begin();nv2a_pb_exec_method(0,0x1D70,7);nv2a_pb_exec_fifo_end();
  assert(MEM(0x80070000)==7 && g.active && g.completion.unpublished);
  assert(g.completion.waits==1 && g.readbacks==0 && MEM(0x80050000)==0);
+ assert(!g.completion.async_releases && !g.completion.async_forced);
  nv2a_pb_exec_guest_access(0x80050000,4);
  assert(!g.active && !g.completion.unpublished && MEM(0x80050000)==0xFFFFFFFF);
  assert(g.completion.access_drains==1 && g.readbacks==1);
@@ -109,4 +170,7 @@ with tempfile.TemporaryDirectory(prefix='qpr2-completion-token-') as folder:
                     '-I'+str(root/'third_party/xboxrecomp/src'),str(src),
                     str(k/'nv2a_gpu_tiles.c'),str(k/'nv2a_vsh_interp.c'),
                     str(k/'nv2a_combiner.c'),'-Wl,--gc-sections','-pthread','-lm','-o',str(exe)],check=True)
-    subprocess.run([str(exe)],cwd=temp,check=True,timeout=90)
+    import os
+    baseline = {key: value for key, value in os.environ.items() if not key.startswith('RECOMP_')}
+    subprocess.run([str(exe)],cwd=temp,check=True,timeout=90,env=baseline)
+    subprocess.run([str(exe)],cwd=temp,check=True,timeout=90,env=dict(baseline, FIXTURE_ASYNC='1'))

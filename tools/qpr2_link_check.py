@@ -1,0 +1,250 @@
+#!/usr/bin/env python3
+"""Link the hand-written QPR2 sources against the runtime without a retail XBE.
+
+The real build needs C generated from the user's own default.xbe.  This check
+replaces that code with empty stubs so a host (CI, a Linux box, a fresh
+checkout) can still prove that the title glue and the pinned runtime compile
+and link together, and that the binary starts and stops where it should.
+
+It never produces a playable build: every lifted function is a stub that
+reports its guest address and aborts if reached.
+
+    python3 tools/qpr2_link_check.py                # configure, build, smoke
+    python3 tools/qpr2_link_check.py --build-dir X  # keep the tree somewhere
+    python3 tools/qpr2_link_check.py --toolchain tools/mingw-w64-x86_64.cmake
+                                                    # cross-link the Windows
+                                                    # configuration (no smoke run)
+
+Exit status 0 means: built, the only unresolved symbols were lifted guest
+functions and the generated dispatch entry points, and the smoke run stopped
+at the missing XBE with exit code 1.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+RUNTIME = ROOT / "third_party" / "xboxrecomp"
+LIFTED = re.compile(r"\bsub_[0-9A-F]{8}\b")
+# Symbols the lift generates besides the sub_XXXXXXXX bodies.  Anything else
+# left undefined is a real gap between the title glue and the runtime.
+GENERATED = {
+    # The stub entry point returns at once. With QPR2_LINK_CHECK_MMIO set it
+    # first touches two trapped register windows, which only works if the
+    # title's fault handler routes them to the runtime's device models.
+    "xbe_entry_point": (
+        "void xbe_entry_point(void) {\n"
+        '    fprintf(stderr, "[LINK-CHECK] xbe_entry_point reached (no game code)\\n");\n'
+        '    if (getenv("QPR2_LINK_CHECK_MMIO")) {\n'
+        "        MEM8(0xFEC0010Bu) = 0x02;   /* AC\'97 channel reset request */\n"
+        '        fprintf(stderr, "[LINK-CHECK] ac97_reset_pending=%u\\n", (unsigned)(MEM8(0xFEC0010Bu) & 0x02));\n'
+        '        fprintf(stderr, "[LINK-CHECK] apu_read=%08X\\n", (unsigned)MEM32(0xFE801100u));\n'
+        "        /* Two periodic reports around 150 ms of work on this thread: the\n"
+        "         * second must attribute that CPU time to guest-main. */\n"
+        "        extern void nv2a_pb_exec_report(void);\n"
+        "        extern uint64_t xbox_HostNowNs(void);\n"
+        "        nv2a_pb_exec_report();\n"
+        "        { volatile uint64_t spin = 0; uint64_t until = xbox_HostNowNs() + 150000000ull;\n"
+        "          while (xbox_HostNowNs() < until) spin++; }\n"
+        "        nv2a_pb_exec_report();\n"
+        "    }\n"
+        "}"),
+    "recomp_lookup": "recomp_func_t recomp_lookup(uint32_t va) { (void)va; return 0; }",
+    "recomp_dispatch_init": "int recomp_dispatch_init(void) { return 0; }",
+}
+CONFIG = """#ifndef QPR2_BUILD_CONFIG_H
+#define QPR2_BUILD_CONFIG_H
+#define QPR2_GAME_TITLE       "link check (no retail code)"
+#define QPR2_TITLE_ID         0x4143000Au
+#define QPR2_TITLE_ID_TEXT    "0x4143000A"
+#define QPR2_ENTRY_POINT      0x000CA76Du
+#define QPR2_XBE_SHA256       "link-check"
+#define QPR2_XBE_PATH         "game/default.xbe"
+#define QPR2_GAME_DIR         "game"
+#define QPR2_SAVE_DIR         "hdd"
+#endif
+"""
+
+
+def lifted_references() -> list[str]:
+    names: set[str] = set()
+    for path in sorted((ROOT / "src").glob("*.c")):
+        names.update(LIFTED.findall(path.read_text(encoding="utf-8", errors="replace")))
+    return sorted(names)
+
+
+def defined_in_title() -> set[str]:
+    """Lifted names the hand-written sources define themselves (recovered bodies)."""
+    pattern = re.compile(r"^(?:void|uint32_t|int)\s+(sub_[0-9A-F]{8})\s*\([^;{]*\)\s*\{", re.M)
+    found: set[str] = set()
+    for path in (ROOT / "src").glob("*.c"):
+        found.update(pattern.findall(path.read_text(encoding="utf-8", errors="replace")))
+    return found
+
+
+def write_stub_tree(stub_root: Path, extra: list[str]) -> int:
+    gen = stub_root / "recomp" / "gen"
+    gen.mkdir(parents=True, exist_ok=True)
+    (stub_root / "generated").mkdir(exist_ok=True)
+    for name in ("recomp_types.h", "kernel_stubs.h", "xbox_memory.h"):
+        source = RUNTIME / "templates" / "runtime" / name
+        if source.exists():
+            shutil.copyfile(source, gen / name)
+    (stub_root / "generated" / "qpr2_build_config.h").write_text(CONFIG, encoding="utf-8")
+    names = lifted_references()
+    (gen / "recomp_funcs.h").write_text(
+        "#ifndef RECOMP_FUNCS_H\n#define RECOMP_FUNCS_H\n"
+        + "".join(f"void {name}(void);\n" for name in names) + "#endif\n", encoding="utf-8")
+    stubs = sorted((set(names) | set(extra)) - defined_in_title() - set(GENERATED))
+    body = [
+        "/* Generated by tools/qpr2_link_check.py. Not game code. */",
+        "#include <stdint.h>", "#include <stdio.h>", "#include <stdlib.h>",
+        '#include "recomp_types.h"',
+        "static void qpr2_stub_reached(uint32_t va)",
+        '{ fprintf(stderr, "[LINK-CHECK] lifted function %08X reached; this build has no game code\\n", va); abort(); }',
+        "/* Weak, so a body the title recovers by hand wins. PE/COFF weak",
+        " * definitions do not resolve across objects with MinGW, so there the",
+        " * stubs are ordinary definitions. */",
+        "#if defined(__MINGW32__)",
+        "#define QPR2_STUB",
+        "/* MinGW's dxguid has no IID_ID3D11Device3; the Windows SDK's does. */",
+        "#include <initguid.h>",
+        "#include <guiddef.h>",
+        "DEFINE_GUID(IID_ID3D11Device3, 0xa05c8c37, 0xd2c6, 0x4732, 0xb3, 0xa0, 0x9c, 0xe0, 0xb0, 0xdc, 0x9a, 0xe6);",
+        "#else",
+        "#define QPR2_STUB __attribute__((weak))",
+        "#endif",
+    ]
+    body += [f"QPR2_STUB void {name}(void) {{ qpr2_stub_reached(0x{name[4:]}u); }}" for name in stubs]
+    body += [f"QPR2_STUB {GENERATED[name]}" for name in sorted(GENERATED)]
+    (gen / "linkcheck_stubs.c").write_text("\n".join(body) + "\n", encoding="utf-8")
+    return len(stubs)
+
+
+def run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
+    return subprocess.run(command, text=True, capture_output=True, **kwargs)
+
+
+def undefined_symbols(output: str) -> set[str]:
+    return set(re.findall(r"undefined reference to `([^']+)'", output))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--build-dir", type=Path)
+    parser.add_argument("--no-smoke", action="store_true", help="build only")
+    parser.add_argument("--toolchain", type=Path,
+                        help="CMake toolchain file; with a Windows cross toolchain this links "
+                             "the Windows configuration and skips the smoke runs")
+    args = parser.parse_args()
+    if not (RUNTIME / "CMakeLists.txt").exists():
+        print("link-check: third_party/xboxrecomp is empty; install the pinned runtime first", file=sys.stderr)
+        return 2
+    if os.name == "nt":
+        print("link-check: use the normal Windows build; this check targets POSIX hosts", file=sys.stderr)
+        return 2
+    temporary = None
+    if args.build_dir:
+        build = args.build_dir.resolve()
+        build.mkdir(parents=True, exist_ok=True)
+    else:
+        temporary = tempfile.TemporaryDirectory(prefix="qpr2-link-check-")
+        build = Path(temporary.name)
+    try:
+        stub_root = build / "stubroot"
+        extra: list[str] = []
+        generator = ["-G", "Ninja"] if shutil.which("ninja") else []
+        for attempt in range(3):
+            count = write_stub_tree(stub_root, extra)
+            configured = run(["cmake", "-S", str(ROOT), "-B", str(build / "cmake"), *generator,
+                              "-DCMAKE_BUILD_TYPE=Release", f"-DQPR2_GENERATED_ROOT={stub_root}",
+                              *([f"-DCMAKE_TOOLCHAIN_FILE={args.toolchain.resolve()}"] if args.toolchain else [])])
+            if configured.returncode:
+                print(configured.stdout[-3000:], configured.stderr[-3000:], file=sys.stderr)
+                return 1
+            built = run(["cmake", "--build", str(build / "cmake"), "--target", "qpr2_recomp", "--parallel"])
+            if built.returncode == 0:
+                break
+            missing = undefined_symbols(built.stdout + built.stderr)
+            lifted = sorted(name for name in missing if LIFTED.fullmatch(name))
+            other = sorted(missing - set(lifted))
+            if other or not lifted:
+                print("link-check: FAILED", file=sys.stderr)
+                if other:
+                    print("  unresolved symbols that are not lifted game code:", file=sys.stderr)
+                    for name in other:
+                        print(f"    {name}", file=sys.stderr)
+                else:
+                    print((built.stdout + built.stderr)[-4000:], file=sys.stderr)
+                return 1
+            extra = sorted(set(extra) | set(lifted))   # called only from other lifted code
+        else:
+            print("link-check: FAILED to converge on a stub set", file=sys.stderr)
+            return 1
+        exe = build / "cmake" / "qpr2_recomp"
+        if args.toolchain and not exe.exists():
+            exe = exe.with_suffix(".exe")
+        print(f"link-check: built {exe.name} with {count} stubbed lifted functions")
+        if args.no_smoke or exe.suffix == ".exe":
+            if exe.suffix == ".exe":
+                print("link-check: OK (Windows configuration compiled and linked; not run)")
+            return 0
+        env = dict(os.environ, RECOMP_HEADLESS="1", SDL_VIDEODRIVER="dummy", SDL_AUDIODRIVER="dummy")
+        with tempfile.TemporaryDirectory(prefix="qpr2-smoke-") as cwd:
+            smoke = run([str(exe)], cwd=cwd, env=env, timeout=60)
+        log = smoke.stdout + smoke.stderr
+        checks = {
+            "renderer ABI line": "[RUNTIME-CHECK] renderer_abi=" in log,
+            "callback registry resolved": "[CALLBACK-CHECK] resolved=70/70 level_callbacks=52/52" in log,
+            "stops at the missing XBE": "default.xbe was not found" in log and smoke.returncode == 1,
+        }
+        # Second run: the runtime's five-function synthetic XBE (no retail
+        # bytes) takes the same binary through memory layout, APU, kernel
+        # bridge, OHCI and NV2A registration, two trapped-register accesses,
+        # and an orderly shutdown.
+        maker = RUNTIME / "tools" / "conformance" / "mkxbe.py"
+        if maker.exists():
+            with tempfile.TemporaryDirectory(prefix="qpr2-boot-") as cwd:
+                (Path(cwd) / "game").mkdir()
+                made = run([sys.executable, str(maker), str(Path(cwd) / "game" / "default.xbe")])
+                trace = Path(cwd) / "frame-trace.bin"
+                boot_env = dict(env, RECOMP_AC97_READY="1", QPR2_LINK_CHECK_MMIO="1",
+                                QPR2_FRAME_TRACE_PATH=str(trace))
+                boot = run([str(exe)], cwd=cwd, env=boot_env, timeout=120)
+                trace_bytes = trace.stat().st_size if trace.exists() else 0
+            boot_log = boot.stdout + boot.stderr
+            log += "\n--- synthetic XBE boot ---\n" + boot_log
+            checks.update({
+                "synthetic XBE written": made.returncode == 0,
+                "runtime init completes": "xbox_MemoryLayoutInit: complete" in boot_log,
+                "AC'97 write trap armed and serviced": "[LINK-CHECK] ac97_reset_pending=0" in boot_log,
+                "APU register read serviced": "[LINK-CHECK] apu_read=" in boot_log,
+                "no crash report": "[CRASH]" not in boot_log,
+                "guest returned and exit code 0": "[BOOT] guest returned" in boot_log and boot.returncode == 0,
+                "frame trace recorder wrote header, boot mark and footers": trace_bytes == 16 + 40 * 4,
+                "periodic report attributes CPU time to guest-main": bool(re.search(
+                    r"^\[THREAD-CPU\] role=guest-main ordinal=1 cpu_ms=1[0-9]{2}\.", boot_log, re.M)),
+                "periodic report includes the process total": "[THREAD-CPU] role=process " in boot_log,
+            })
+        for name, ok in checks.items():
+            print(f"  {'ok  ' if ok else 'FAIL'} {name}")
+        if not all(checks.values()):
+            print(log[-3000:], file=sys.stderr)
+            print(f"  exit code {smoke.returncode}", file=sys.stderr)
+            return 1
+        print("link-check: OK (no game code was run)")
+        return 0
+    finally:
+        if temporary:
+            temporary.cleanup()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

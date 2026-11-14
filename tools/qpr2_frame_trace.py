@@ -19,7 +19,7 @@ HEADER = struct.Struct("<4sIII")
 RECORD = struct.Struct("<Q8I")
 (FLIP, HANDOFF, DRAW, PHASE, CAPTURE_BEGIN, CAPTURE_END, CPU_METRIC, GPU_SAMPLE,
  GUEST_FENCE_WAIT, PAUSE, PROFILE_FRAME, THREAD_CPU, GUEST_PC, DEPTH_LAYOUT,
- DEPTH_DRAIN, SCENE_ACTIVITY, OVERLAY) = range(1, 18)
+ DEPTH_DRAIN, SCENE_ACTIVITY, OVERLAY, VBLANK_EVENTS) = range(1, 19)
 CPU_FIELDS = (
     "fifo_ms", "upload_ms", "geometry_submit_ms", "raster_submit_ms",
     "target_bind_ms", "current_map_ms", "queued_map_ms", "publication_ms",
@@ -35,7 +35,8 @@ RAW_BOUNDARY = ("raw_boundary_numeric", "raw_boundary_w", "raw_boundary_xy",
                 "raw_boundary_z", "raw_boundary_point_limit")
 RAW_COUNTS = ("raw_boundary_draws", "raw_boundary_vertices")
 DEPTH_CLEAR_COUNTS = ("depth_copies_retired_by_clear",)
-COMPLETION_COUNTS = ("completion_markers", "completion_markers_reused")
+COMPLETION_COUNTS = ("completion_markers", "completion_markers_reused",
+                     "completion_early_releases", "completion_forced_markers")
 PROFILE_COUNTS = DEPTH_CLEAR_COUNTS + COMPLETION_COUNTS
 FOOTER = 0xFFFFFFFF
 PRODUCERS = ("renderer", "window", "title")
@@ -65,10 +66,10 @@ def read_trace(path: Path) -> tuple[list[Event], dict]:
         if len(header) != HEADER.size:
             raise ValueError("missing frame trace header")
         magic, version, size, producers = HEADER.unpack(header)
-        if (magic != b"QPTR" or version not in (1, 2, 3) or size != RECORD.size or
+        if (magic != b"QPTR" or version not in (1, 2, 3, 4) or size != RECORD.size or
                 producers != len(PRODUCERS)):
             raise ValueError("unsupported frame trace header")
-        last_event = (CAPTURE_END, PROFILE_FRAME, OVERLAY)[version - 1]
+        last_event = (CAPTURE_END, PROFILE_FRAME, OVERLAY, VBLANK_EVENTS)[version - 1]
         events = []
         dropped = {}
         last_sequence = {}
@@ -194,7 +195,7 @@ def percentile(samples: list[float], q: float) -> float | None:
     return samples[math.ceil(len(samples) * q) - 1] if samples else None
 
 
-def summarize(rows: list[dict]) -> dict:
+def summarize(rows: list[dict], delivered_vblanks=None) -> dict:
     all_phases = {}
     for row in rows:
         all_phases.setdefault(row["phase"], []).append(row)
@@ -204,6 +205,8 @@ def summarize(rows: list[dict]) -> dict:
         samples = sorted(row["frame_ms"] for row in measured)
         duration_ms = sum(samples)
         kernel_vblanks = sum(row["emulated_vblanks"] for row in measured)
+        delivered = [delivered_vblanks[row["frame_id"]] for row in measured
+                     if delivered_vblanks and row["frame_id"] in delivered_vblanks]
         display_rate = sum(row["guest_ticks"] for row in measured) * 1000 / duration_ms if duration_ms else None
         handoffs = [row for row in measured if row["handoff_ns"] is not None]
         draws = [row for row in measured if row["draw_ns"] is not None]
@@ -220,6 +223,9 @@ def summarize(rows: list[dict]) -> dict:
             "p99_ms": percentile(samples, .99),
             "max_ms": max(samples, default=None),
             "duration_ms": duration_ms,
+            "sustained_30fps": bool(samples) and samples[-1] <= 1000 / 30,
+            "sustained_60fps": bool(samples) and samples[-1] <= 1000 / 60,
+            "over_16_67_ms": sum(x > 1000 / 60 for x in samples),
             "over_33_33_ms": sum(x > 1000 / 30 for x in samples),
             "over_50_ms": sum(x > 50 for x in samples),
             "over_100_ms": sum(x > 100 for x in samples),
@@ -230,6 +236,8 @@ def summarize(rows: list[dict]) -> dict:
             "guest_tick_hz": display_rate,
             "guest_display_vblank_hz": display_rate,
             "emulated_vblank_hz": display_rate,  # Compatibility with the research CLI.
+            "delivered_vblank_events_hz": (sum(delivered) * 1000 / duration_ms
+                                            if duration_ms and len(delivered) == len(measured) else None),
             "kernel_interrupt_vblank_hz": kernel_vblanks * 1000 / duration_ms if kernel_vblanks else None,
         }
     return phases
@@ -413,13 +421,24 @@ def export(run_dir: Path, exclude_segments=()) -> dict:
     events, integrity = read_trace(run_dir / "frame-trace.bin")
     excluded = frozenset(exclude_segments)
     rows, phase_markers = frame_rows(events, excluded)
+    delivered_vblanks = {}
+    last_vblank = None
+    for event in events:
+        if event.kind == VBLANK_EVENTS:
+            if last_vblank and difference(event.frame, last_vblank.frame) == 1:
+                delivered_vblanks[event.frame] = difference(event.arg0, last_vblank.arg0)
+            last_vblank = event
     if excluded - {marker["segment"] for marker in phase_markers} - {0}:
         raise ValueError("unknown phase segment to exclude")
     # Report source status alongside the data even if the writer reached EOF
     # after a watchdog exit. Runs with lost phase/capture markers are suspect.
+    warnings = []
+    if not any(mark["manual"] and mark["phase"] in ("countdown", "ahead", "behind")
+               for mark in phase_markers):
+        warnings.append("no manual phase marks: countdown, ahead and behind cannot be separated")
     summary = {"schema_version": 2, "run_id": manifest["run_id"], "mode": manifest["mode"],
-               "status": manifest["status"], "integrity": integrity,
-               "phase_markers": phase_markers, "phases": summarize(rows)}
+               "status": manifest["status"], "integrity": integrity, "warnings": warnings,
+               "phase_markers": phase_markers, "phases": summarize(rows, delivered_vblanks)}
     if excluded:
         summary["manually_excluded_segments"] = sorted(excluded)
     frame_columns = (
@@ -473,6 +492,7 @@ def compare(reference: Path, candidate: Path, exclude_reference=(), exclude_cand
         if (not integrity["complete"] or any(integrity["dropped"].values())
                 or any(integrity["sequence_gaps"].values())):
             warnings.append(f'{run["run_id"]} has an incomplete trace or dropped records')
+        warnings.extend(f'{run["run_id"]}: {text}' for text in run["warnings"])
     before_manifest = json.loads((reference / "run.json").read_text(encoding="utf-8-sig"))
     after_manifest = json.loads((candidate / "run.json").read_text(encoding="utf-8-sig"))
     changed = {}

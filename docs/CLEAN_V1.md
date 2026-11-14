@@ -89,7 +89,16 @@ py -3 tools/qpr2_debug_metadata.py lookup "$($run.FullName)/memory-map.json" 0xF
 
 The memory export is a startup snapshot. Live allocations, thread stacks,
 host page permissions and GPU target ownership need runtime snapshots.
-Remaining work includes typed event rings and crash history, distinct host
-frame counters and phase exports, the live stats overlay and debugger,
-pause/step and selective watches. Historical cleanup and further tuning
+Frame events already use typed per-producer rings, and Benchmark runs export
+distinct flip, handoff and draw records with phase marks. Remaining work
+includes typed rings and crash history for the other producers, game-side
+phase marks, debugger snapshots, pause/step and selective watches. F2 opens
+the frame-time overlay on Windows. Historical cleanup and further tuning
 follow those foundations.
+
+## Where race time goes
+
+Use `[GPU-FIFO] execute_ms` for executor occupancy and `[THREAD-CPU]` for
+actual CPU time. Completion-marker and readback Map measurements include
+time waiting for previously submitted GPU work. Compare those timings
+against `profile-summary.json` for the same marked scenes.
